@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+*.bak
+*.pdf
+transcricao_audio.txt
+audio1.wav
+README.md
+Dockerfile
+.dockerignore

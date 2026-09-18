@@ -1,0 +1,10 @@
+services:
+  transcricao:
+    build: .
+    container_name: transcricao
+    ports:
+      - "8501:8501"
+    volumes:
+      # Arquivos largados em ./dados ficam visíveis para a CLI dentro do container.
+      - ./dados:/app/dados
+    restart: unless-stopped
