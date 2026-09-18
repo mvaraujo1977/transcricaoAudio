@@ -3,3 +3,7 @@ SpeechRecognition>=3.10
 # Necessário apenas para entradas que não sejam wav/aiff/flac (mp3, m4a, mp4...).
 # Requer o ffmpeg disponível no PATH.
 moviepy>=2.0
+# Interface gráfica (app.py)
+streamlit>=1.30
+# Exportação da transcrição em PDF (gerar_pdf.py)
+reportlab>=4.0
