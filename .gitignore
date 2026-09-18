@@ -1,0 +1,5 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.bak
+transcricao_audio.txt

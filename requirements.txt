@@ -1,0 +1,5 @@
+# Transcrição de áudio/vídeo para texto
+SpeechRecognition>=3.10
+# Necessário apenas para entradas que não sejam wav/aiff/flac (mp3, m4a, mp4...).
+# Requer o ffmpeg disponível no PATH.
+moviepy>=2.0
