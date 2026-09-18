@@ -5,10 +5,10 @@ import io
 import os
 import tempfile
 
-import speech_recognition as sr
 import streamlit as st
 
-from audioTranscricao import DURACAO_BLOCO_PADRAO, transcribe_audio_to_text
+from audioTranscricao import (MODELO_PADRAO, MODELOS, inicio_dos_paragrafos,
+                              transcrever)
 from gerar_pdf import transcricao_para_pdf
 
 FORMATOS_ACEITOS = ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aiff', 'mp4', 'mkv', 'avi', 'mov']
@@ -21,6 +21,16 @@ IDIOMAS = {
     'Francês': 'fr-FR',
     'Italiano': 'it-IT',
     'Alemão': 'de-DE',
+    'Detectar automaticamente': None,
+}
+
+# Tamanho aproximado do download de cada modelo, para avisar antes da espera.
+TAMANHO_MODELO = {
+    'tiny': '~75 MB',
+    'base': '~145 MB',
+    'small': '~480 MB',
+    'medium': '~1,5 GB',
+    'large-v3': '~3 GB',
 }
 
 
@@ -35,23 +45,30 @@ def _nome_base(nome_arquivo):
     return os.path.splitext(os.path.basename(nome_arquivo or 'transcricao'))[0] or 'transcricao'
 
 
-def _salvar_upload(upload):
-    """Grava o upload num arquivo temporário preservando a extensão original.
+def _modelo_baixado(nome_modelo):
+    """Diz se o modelo já está no cache local, para avisar sobre o download."""
+    raiz = os.environ.get('HF_HOME') or os.path.join(os.path.expanduser('~'), '.cache', 'huggingface')
+    pasta = os.path.join(raiz, 'hub', 'models--Systran--faster-whisper-{0}'.format(nome_modelo))
+    return os.path.isdir(pasta)
 
-    A extensão importa: é por ela que o transcritor decide se precisa converter
-    o arquivo para WAV antes de enviá-lo ao reconhecedor.
-    """
+
+def _salvar_upload(upload):
+    """Grava o upload num arquivo temporário preservando a extensão original."""
     sufixo = os.path.splitext(upload.name)[1] or '.wav'
     with tempfile.NamedTemporaryFile(delete=False, suffix=sufixo) as temporario:
         temporario.write(upload.getbuffer())
         return temporario.name
 
 
-def _executar_transcricao(caminho, idioma, duracao_bloco):
+def _executar_transcricao(caminho, idioma, modelo):
     """Roda a transcrição alimentando a barra de progresso e o painel de status."""
     barra = st.progress(0.0, text="Preparando o áudio...")
 
     with st.status("Transcrevendo...", expanded=True) as status:
+        if not _modelo_baixado(modelo):
+            st.write("Baixando o modelo **{0}** ({1}). Isso acontece só na primeira "
+                     "execução.".format(modelo, TAMANHO_MODELO.get(modelo, '')))
+
         def progresso(processado, total):
             if total:
                 barra.progress(min(processado / total, 1.0),
@@ -60,15 +77,25 @@ def _executar_transcricao(caminho, idioma, duracao_bloco):
                     _mmss(processado), _mmss(total)))
             else:
                 barra.progress(0.0, text="{0} processados".format(_mmss(processado)))
-                status.update(label="Transcrevendo... {0} processados".format(_mmss(processado)))
 
-        resultado = transcribe_audio_to_text(caminho, idioma=idioma,
-                                             duracao_bloco=duracao_bloco,
-                                             progresso=progresso)
+        resultado = transcrever(caminho, idioma=idioma, modelo=modelo, progresso=progresso)
         status.update(label="Transcrição concluída", state="complete")
 
     barra.progress(1.0, text="Concluído")
     return resultado
+
+
+def _com_marcacao_de_tempo(texto, segmentos):
+    """Prefixa cada parágrafo com [MM:SS] do seu primeiro segmento."""
+    paragrafos = [p for p in texto.split('\n\n') if p.strip()]
+    inicios = inicio_dos_paragrafos(segmentos)
+    marcados = []
+    for indice, paragrafo in enumerate(paragrafos):
+        if indice < len(inicios):
+            marcados.append("[{0}] {1}".format(_mmss(inicios[indice]), paragrafo))
+        else:
+            marcados.append(paragrafo)
+    return '\n\n'.join(marcados)
 
 
 def _pdf_em_bytes(texto, nome_origem, idioma):
@@ -82,35 +109,36 @@ st.set_page_config(page_title="Transcrição de Áudio", page_icon="🎙️", la
 
 st.title("🎙️ Transcrição de Áudio")
 st.caption("Envie um arquivo de áudio ou vídeo e receba a transcrição em texto, "
-           "pronta para revisar e exportar.")
+           "pronta para revisar e exportar. O reconhecimento roda localmente.")
 
 upload = st.file_uploader("Arquivo de áudio ou vídeo", type=FORMATOS_ACEITOS)
 
 with st.expander("Opções avançadas"):
     rotulo_idioma = st.selectbox("Idioma do áudio", list(IDIOMAS), index=0)
     idioma = IDIOMAS[rotulo_idioma]
-    duracao_bloco = st.slider(
-        "Duração de cada bloco (segundos)", min_value=10, max_value=60,
-        value=DURACAO_BLOCO_PADRAO,
-        help="O áudio é enviado ao Google em blocos. Blocos menores dão um progresso "
-             "mais granular; maiores tendem a preservar melhor o contexto das frases.")
+    modelo = st.selectbox("Modelo", MODELOS, index=MODELOS.index(MODELO_PADRAO))
+    st.caption("Modelos maiores são mais precisos e mais lentos. `small` costuma "
+               "equilibrar bem; `medium` e `large-v3` ganham em jargão e nomes "
+               "próprios, ao custo de várias vezes o tempo de processamento.")
+    if not _modelo_baixado(modelo):
+        st.info("O modelo **{0}** ({1}) será baixado na primeira transcrição.".format(
+            modelo, TAMANHO_MODELO.get(modelo, '')))
 
 if st.button("Transcrever", type="primary", disabled=upload is None):
     caminho = _salvar_upload(upload)
     try:
-        resultado = _executar_transcricao(caminho, idioma, duracao_bloco)
-    except sr.RequestError as erro:
-        st.error("Erro ao consultar o serviço de reconhecimento do Google: {0}".format(erro))
+        resultado = _executar_transcricao(caminho, idioma, modelo)
     except (OSError, ValueError, RuntimeError) as erro:
         st.error("Erro: {0}".format(erro))
     else:
         # Sem o session_state, qualquer interação na tela dispara um rerun e a
         # transcrição (que custou minutos) seria perdida.
         st.session_state['texto_editado'] = resultado.texto
+        st.session_state['segmentos'] = resultado.segmentos
+        st.session_state['duracao'] = resultado.duracao
+        st.session_state['idioma_detectado'] = resultado.idioma_detectado
         st.session_state['nome_origem'] = upload.name
-        st.session_state['idioma'] = idioma
-        st.session_state['blocos_falhados'] = resultado.blocos_falhados
-        st.session_state['blocos_sem_fala'] = resultado.blocos_sem_fala
+        st.session_state['idioma'] = idioma or resultado.idioma_detectado
     finally:
         with contextlib.suppress(OSError):
             os.remove(caminho)
@@ -118,25 +146,27 @@ if st.button("Transcrever", type="primary", disabled=upload is None):
 if 'texto_editado' in st.session_state:
     st.divider()
 
-    falhados = st.session_state.get('blocos_falhados', 0)
-    if falhados:
-        st.warning("{0} bloco(s) não puderam ser transcritos por falha no serviço do "
-                   "Google. O texto abaixo está incompleto.".format(falhados))
-
-    sem_fala = st.session_state.get('blocos_sem_fala', 0)
-    if sem_fala:
-        st.info("{0} bloco(s) sem fala reconhecível (silêncio ou ruído) foram "
-                "ignorados.".format(sem_fala))
+    coluna_a, coluna_b, coluna_c = st.columns(3)
+    coluna_a.metric("Duração", _mmss(st.session_state.get('duracao')))
+    coluna_b.metric("Idioma detectado", st.session_state.get('idioma_detectado') or '—')
+    coluna_c.metric("Segmentos", len(st.session_state.get('segmentos') or []))
 
     st.subheader("Transcrição")
-    st.caption("O reconhecimento de fala erra nomes próprios e pontuação — corrija o "
+    st.caption("O reconhecimento pode errar nomes próprios e siglas — corrija o "
                "texto aqui antes de exportar.")
     texto = st.text_area("Texto transcrito", height=400, key="texto_editado",
                          label_visibility="collapsed")
 
+    com_tempo = st.checkbox(
+        "Incluir marcação de tempo no PDF",
+        help="Prefixa cada parágrafo com [MM:SS], para voltar ao ponto exato do áudio.")
+
     nome_origem = st.session_state.get('nome_origem')
     idioma_usado = st.session_state.get('idioma')
     nome_base = _nome_base(nome_origem)
+    segmentos = st.session_state.get('segmentos') or []
+
+    texto_pdf = _com_marcacao_de_tempo(texto, segmentos) if com_tempo else texto
 
     coluna_txt, coluna_pdf = st.columns(2)
     with coluna_txt:
@@ -149,7 +179,7 @@ if 'texto_editado' in st.session_state:
             use_container_width=True)
     with coluna_pdf:
         try:
-            pdf = _pdf_em_bytes(texto, nome_origem, idioma_usado) if texto.strip() else b''
+            pdf = _pdf_em_bytes(texto_pdf, nome_origem, idioma_usado) if texto.strip() else b''
         except ValueError as erro:
             st.error("Erro ao gerar o PDF: {0}".format(erro))
         else:

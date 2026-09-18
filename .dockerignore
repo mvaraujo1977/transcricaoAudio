@@ -10,3 +10,4 @@ audio1.wav
 README.md
 Dockerfile
 .dockerignore
+dados/

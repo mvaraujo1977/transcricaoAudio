@@ -1,160 +1,155 @@
-"""Transcreve áudio (ou a trilha de um vídeo) para texto usando o Google Speech Recognition."""
+"""Transcreve áudio (ou a trilha de um vídeo) para texto usando o faster-whisper, local."""
 
 import argparse
 import collections
-import contextlib
+import functools
 import os
 import sys
-import tempfile
-import time
 
-import speech_recognition as sr
+MODELOS = ('tiny', 'base', 'small', 'medium', 'large-v3')
+MODELO_PADRAO = 'small'
 
-# Extensões que o speech_recognition lê diretamente; as demais são convertidas.
-FORMATOS_NATIVOS = {'.wav', '.aiff', '.aifc', '.flac'}
+# O Whisper identifica idiomas por ISO 639-1 ("pt"), não pelas etiquetas regionais
+# que a interface usa ("pt-BR"). O mapa aceita as duas formas.
+IDIOMAS_WHISPER = {
+    'pt-br': 'pt', 'pt-pt': 'pt', 'pt': 'pt',
+    'en-us': 'en', 'en-gb': 'en', 'en': 'en',
+    'es-es': 'es', 'es-mx': 'es', 'es': 'es',
+    'fr-fr': 'fr', 'fr': 'fr',
+    'it-it': 'it', 'it': 'it',
+    'de-de': 'de', 'de': 'de',
+}
 
-# O endpoint gratuito do Google rejeita/trunca áudios longos, então o arquivo
-# é enviado em blocos e as transcrições são concatenadas.
-DURACAO_BLOCO_PADRAO = 50
+# Um parágrafo fecha no primeiro segmento terminado em pontuação forte depois
+# deste tamanho, para o PDF não virar um bloco único de texto.
+TAMANHO_PARAGRAFO = 500
+FIM_DE_FRASE = ('.', '!', '?')
 
-# Pausa antes de repetir um bloco que falhou por erro de rede/serviço.
-PAUSA_NOVA_TENTATIVA = 2
-
-# Blocos sem fala reconhecível são normais (silêncio, ruído); blocos perdidos por
-# falha de rede indicam transcrição incompleta. Os dois são contados à parte.
-BlocosTranscritos = collections.namedtuple(
-    'BlocosTranscritos', 'trechos blocos_falhados blocos_sem_fala')
+Segmento = collections.namedtuple('Segmento', 'start end text')
 
 Transcricao = collections.namedtuple(
-    'Transcricao', 'texto blocos_falhados blocos_sem_fala')
+    'Transcricao', 'texto segmentos duracao idioma_detectado')
 
 
-def _carregar_moviepy():
-    """Importa o moviepy tratando a mudança de API entre a 1.x e a 2.x."""
-    try:
-        from moviepy import VideoFileClip, AudioFileClip  # moviepy >= 2.0
-    except ImportError:
-        from moviepy.editor import VideoFileClip, AudioFileClip  # moviepy 1.x
-    return VideoFileClip, AudioFileClip
+@functools.lru_cache(maxsize=2)
+def carregar_modelo(nome_modelo=MODELO_PADRAO):
+    """Devolve o WhisperModel, reaproveitando a instância entre chamadas.
 
-
-def extract_audio_from_video(video_path, audio_path):
-    """Extrai a trilha de áudio de um vídeo para um arquivo .wav."""
-    VideoFileClip, _ = _carregar_moviepy()
-    with VideoFileClip(video_path) as video:
-        if video.audio is None:
-            raise ValueError("O vídeo '{0}' não possui trilha de áudio".format(video_path))
-        video.audio.write_audiofile(audio_path, logger=None)
-
-
-def converter_para_wav(caminho_entrada, caminho_wav):
-    """Converte qualquer mídia suportada pelo ffmpeg em .wav mono 16 kHz."""
-    VideoFileClip, AudioFileClip = _carregar_moviepy()
-    try:
-        clip = AudioFileClip(caminho_entrada)
-    except Exception:  # arquivo de vídeo: pega a trilha de áudio
-        extract_audio_from_video(caminho_entrada, caminho_wav)
-        return
-    with clip:
-        clip.write_audiofile(caminho_wav, fps=16000, nbytes=2, ffmpeg_params=['-ac', '1'], logger=None)
-
-
-def _reconhecer_bloco(recognizer, audio, idioma, offset):
-    """Envia um bloco ao Google e devolve (texto, motivo_da_falha).
-
-    Uma falha de rede não aborta mais a transcrição inteira: o bloco é repetido
-    uma vez e, persistindo o erro, vira apenas um aviso, para que os blocos já
-    transcritos não sejam perdidos.
+    Instanciar o modelo lê centenas de MB do disco; o cache evita pagar isso a
+    cada transcrição.
     """
-    for tentativa in (1, 2):
-        try:
-            return recognizer.recognize_google(audio, language=idioma), None
-        except sr.UnknownValueError:
-            print("Aviso: trecho a partir de {0:.0f}s não foi compreendido".format(offset),
-                  file=sys.stderr)
-            return None, 'sem_fala'
-        except sr.RequestError as erro:
-            if tentativa == 1:
-                time.sleep(PAUSA_NOVA_TENTATIVA)
-                continue
-            print("Aviso: trecho a partir de {0:.0f}s perdido por falha no serviço: {1}".format(
-                offset, erro), file=sys.stderr)
-            return None, 'falha'
+    from faster_whisper import WhisperModel
+    return WhisperModel(nome_modelo, device="cpu", compute_type="int8")
 
 
-def transcrever_blocos(recognizer, source, idioma, duracao_bloco, progresso=None):
-    """Percorre o áudio em blocos e devolve um BlocosTranscritos.
+def codigo_idioma(idioma):
+    """Converte 'pt-BR' em 'pt'. None significa deixar o Whisper detectar."""
+    if not idioma:
+        return None
+    return IDIOMAS_WHISPER.get(idioma.strip().lower(), idioma.split('-')[0].lower())
 
-    `progresso`, quando informado, é chamado ao fim de cada bloco como
+
+def agrupar_em_paragrafos(segmentos):
+    """Agrupa segmentos em parágrafos separados por linha em branco.
+
+    gerar_pdf.py divide o texto justamente por '\\n\\n', então este é o formato
+    que faz o PDF sair paginado em parágrafos em vez de um bloco corrido.
+    """
+    paragrafos = []
+    atual = []
+    tamanho = 0
+
+    for segmento in segmentos:
+        texto = segmento.text.strip()
+        if not texto:
+            continue
+        atual.append(texto)
+        tamanho += len(texto) + 1
+        if tamanho >= TAMANHO_PARAGRAFO and texto.endswith(FIM_DE_FRASE):
+            paragrafos.append(' '.join(atual))
+            atual = []
+            tamanho = 0
+
+    if atual:
+        paragrafos.append(' '.join(atual))
+    return paragrafos
+
+
+def inicio_dos_paragrafos(segmentos):
+    """Devolve o `start` do primeiro segmento de cada parágrafo, na mesma ordem."""
+    inicios = []
+    tamanho = 0
+    aberto = False
+
+    for segmento in segmentos:
+        texto = segmento.text.strip()
+        if not texto:
+            continue
+        if not aberto:
+            inicios.append(segmento.start)
+            aberto = True
+        tamanho += len(texto) + 1
+        if tamanho >= TAMANHO_PARAGRAFO and texto.endswith(FIM_DE_FRASE):
+            aberto = False
+            tamanho = 0
+
+    return inicios
+
+
+def transcrever(caminho, text_output_path=None, idioma="pt-BR", modelo=MODELO_PADRAO,
+                progresso=None):
+    """Transcreve `caminho` e devolve um Transcricao.
+
+    `progresso`, quando informado, é chamado a cada segmento reconhecido como
     progresso(segundos_processados, duracao_total).
     """
-    trechos = []
-    blocos_falhados = 0
-    blocos_sem_fala = 0
-    offset = 0.0
-    total = source.DURATION or 0.0
+    if not os.path.isfile(caminho):
+        raise FileNotFoundError("Arquivo não encontrado: {0}".format(caminho))
 
-    while True:
-        audio = recognizer.record(source, duration=duracao_bloco)
-        if not audio.frame_data:
-            break
+    model = carregar_modelo(modelo)
 
-        texto, motivo = _reconhecer_bloco(recognizer, audio, idioma, offset)
-        if texto:
-            trechos.append(texto)
-        elif motivo == 'falha':
-            blocos_falhados += 1
-        else:
-            blocos_sem_fala += 1
+    # vad_filter descarta o silêncio: acelera a transcrição e evita o modo de
+    # falha do Whisper de repetir a mesma frase em loop em trechos mudos.
+    segmentos_brutos, info = model.transcribe(
+        caminho,
+        language=codigo_idioma(idioma),
+        beam_size=5,
+        vad_filter=True,
+    )
 
-        offset += duracao_bloco
+    # `segmentos_brutos` é um gerador: a transcrição só ocorre ao iterar, o que
+    # dá progresso real sem dividir o áudio em blocos artificiais.
+    segmentos = []
+    for segmento in segmentos_brutos:
+        segmentos.append(Segmento(segmento.start, segmento.end, segmento.text))
         if progresso is not None:
-            progresso(min(offset, total) if total else offset, total)
-        if total and offset >= total:
-            break
+            progresso(min(segmento.end, info.duration), info.duration)
 
-    return BlocosTranscritos(trechos, blocos_falhados, blocos_sem_fala)
+    if not segmentos:
+        raise RuntimeError("Nenhuma fala foi reconhecida no arquivo")
 
+    texto = '\n\n'.join(agrupar_em_paragrafos(segmentos))
 
-def transcribe_audio_to_text(audio_path, text_output_path=None, idioma="pt-BR",
-                             duracao_bloco=DURACAO_BLOCO_PADRAO, progresso=None):
-    """Transcreve `audio_path` e devolve um Transcricao.
-
-    O resultado só é gravado em disco quando `text_output_path` é informado.
-    """
-    if not os.path.isfile(audio_path):
-        raise FileNotFoundError("Arquivo de áudio não encontrado: {0}".format(audio_path))
-
-    with contextlib.ExitStack() as stack:
-        extensao = os.path.splitext(audio_path)[1].lower()
-        if extensao not in FORMATOS_NATIVOS:
-            temporario = os.path.join(tempfile.mkdtemp(), 'audio_convertido.wav')
-            stack.callback(lambda: _remover_silencioso(temporario))
-            print("Convertendo '{0}' para WAV...".format(os.path.basename(audio_path)))
-            converter_para_wav(audio_path, temporario)
-            audio_path = temporario
-
-        recognizer = sr.Recognizer()
-        source = stack.enter_context(sr.AudioFile(audio_path))
-        blocos = transcrever_blocos(recognizer, source, idioma, duracao_bloco, progresso)
-
-    if not blocos.trechos:
-        raise RuntimeError("Nenhum trecho do áudio pôde ser transcrito")
-
-    texto = ' '.join(blocos.trechos)
     if text_output_path is not None:
         with open(text_output_path, 'w', encoding='utf-8') as arquivo:
             arquivo.write(texto)
         print("Transcrição salva em: {0}".format(text_output_path))
 
-    return Transcricao(texto, blocos.blocos_falhados, blocos.blocos_sem_fala)
+    if progresso is not None:
+        progresso(info.duration, info.duration)
+
+    return Transcricao(texto, segmentos, info.duration, info.language)
 
 
-def _remover_silencioso(caminho):
-    with contextlib.suppress(OSError):
-        os.remove(caminho)
-    with contextlib.suppress(OSError):
-        os.rmdir(os.path.dirname(caminho))
+def transcribe_audio_to_text(audio_path, text_output_path=None, idioma="pt-BR",
+                             modelo=MODELO_PADRAO, progresso=None):
+    """Alias mantido para não quebrar importações existentes."""
+    return transcrever(audio_path, text_output_path, idioma, modelo, progresso)
+
+
+def _mmss(segundos):
+    segundos = int(segundos or 0)
+    return "{0:02d}:{1:02d}".format(segundos // 60, segundos % 60)
 
 
 def main(argv=None):
@@ -165,23 +160,28 @@ def main(argv=None):
                         help="arquivo de áudio ou vídeo (padrão: audio1.wav ao lado do script)")
     parser.add_argument('-o', '--saida', default=os.path.join(script_dir, 'transcricao_audio.txt'),
                         help="arquivo .txt de saída")
-    parser.add_argument('-l', '--idioma', default='pt-BR', help='idioma do áudio (ex.: en-US)')
-    parser.add_argument('-b', '--bloco', type=int, default=DURACAO_BLOCO_PADRAO,
-                        help="duração de cada bloco enviado ao Google, em segundos")
+    parser.add_argument('-l', '--idioma', default='pt-BR',
+                        help="idioma do áudio (ex.: en-US); vazio deixa o Whisper detectar")
+    parser.add_argument('-m', '--modelo', default=MODELO_PADRAO, choices=MODELOS,
+                        help="modelo Whisper: maiores são mais precisos e mais lentos")
     args = parser.parse_args(argv)
 
+    def progresso(processado, total):
+        if total:
+            print("\r  {0} de {1} ({2:.0f}%)".format(
+                _mmss(processado), _mmss(total), 100.0 * processado / total),
+                end='', file=sys.stderr)
+
     try:
-        resultado = transcribe_audio_to_text(args.entrada, args.saida, args.idioma, args.bloco)
-    except sr.RequestError as erro:
-        print("Erro ao consultar o serviço do Google: {0}".format(erro), file=sys.stderr)
-        return 1
+        resultado = transcrever(args.entrada, args.saida, args.idioma, args.modelo, progresso)
     except (OSError, ValueError, RuntimeError) as erro:
         print("Erro: {0}".format(erro), file=sys.stderr)
         return 1
 
-    if resultado.blocos_falhados:
-        print("Atenção: {0} bloco(s) perdidos por falha no serviço; a transcrição "
-              "está incompleta.".format(resultado.blocos_falhados), file=sys.stderr)
+    print("", file=sys.stderr)
+    print("Duração: {0} | idioma detectado: {1} | {2} segmentos".format(
+        _mmss(resultado.duracao), resultado.idioma_detectado, len(resultado.segmentos)),
+        file=sys.stderr)
     return 0
 
 

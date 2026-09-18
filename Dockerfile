@@ -1,11 +1,9 @@
 FROM python:3.12-slim
 
-# O moviepy precisa do ffmpeg para converter mp3/m4a/mp4 em WAV. O binário do
-# imageio-ffmpeg costuma bastar, mas depurar essa falha dentro do container é
-# pior do que carregar os ~100 MB do pacote do sistema.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+# O usuário não-root é criado antes do modelo: assim o download já nasce com o
+# dono certo e evita um "chown -R" depois, que duplicaria os ~460 MB do modelo
+# numa camada nova.
+RUN useradd --create-home --shell /bin/bash transcricao
 
 WORKDIR /app
 
@@ -14,13 +12,17 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+ENV HF_HOME=/app/.cache/huggingface
 
-# O app roda sem privilégios; /app/dados é o ponto de montagem do volume.
-RUN useradd --create-home --shell /bin/bash transcricao \
-    && mkdir -p /app/dados \
-    && chown -R transcricao:transcricao /app
+RUN mkdir -p /app/dados /app/.cache && chown -R transcricao:transcricao /app
 USER transcricao
+
+# O modelo é baixado no build para a imagem ficar autocontida: nada de esperar
+# centenas de MB na primeira transcrição. Fica antes do COPY do código para que
+# alterações em app.py não refaçam este download.
+RUN python -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')"
+
+COPY --chown=transcricao:transcricao . .
 
 EXPOSE 8501
 
