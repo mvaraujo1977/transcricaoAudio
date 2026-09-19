@@ -25,6 +25,10 @@ IDIOMAS_WHISPER = {
 TAMANHO_PARAGRAFO = 500
 FIM_DE_FRASE = ('.', '!', '?')
 
+# O Whisper reserva metade do seu contexto de 448 tokens para o initial_prompt e
+# descarta silenciosamente o que passar disso; o excedente é cortado por nós.
+LIMITE_TOKENS_VOCABULARIO = 224
+
 Segmento = collections.namedtuple('Segmento', 'start end text')
 
 Transcricao = collections.namedtuple(
@@ -47,6 +51,27 @@ def codigo_idioma(idioma):
     if not idioma:
         return None
     return IDIOMAS_WHISPER.get(idioma.strip().lower(), idioma.split('-')[0].lower())
+
+
+def preparar_vocabulario(vocabulario, modelo=MODELO_PADRAO):
+    """Devolve (texto, foi_truncado) pronto para virar initial_prompt.
+
+    O Whisper corta o prompt em 224 tokens sem avisar; aqui o corte é explícito,
+    para a tela poder dizer que parte do vocabulário ficou de fora.
+    """
+    if not vocabulario or not vocabulario.strip():
+        return None, False
+
+    texto = ' '.join(vocabulario.split())
+    tokenizer = carregar_modelo(modelo).hf_tokenizer
+    ids = tokenizer.encode(texto, add_special_tokens=False).ids
+    if len(ids) <= LIMITE_TOKENS_VOCABULARIO:
+        return texto, False
+
+    cortado = tokenizer.decode(ids[:LIMITE_TOKENS_VOCABULARIO]).strip()
+    if ' ' in cortado:  # não termina no meio de uma palavra
+        cortado = cortado.rsplit(' ', 1)[0]
+    return cortado, True
 
 
 def agrupar_em_paragrafos(segmentos):
@@ -97,16 +122,23 @@ def inicio_dos_paragrafos(segmentos):
 
 
 def transcrever(caminho, text_output_path=None, idioma="pt-BR", modelo=MODELO_PADRAO,
-                progresso=None):
+                progresso=None, vocabulario=None):
     """Transcreve `caminho` e devolve um Transcricao.
 
     `progresso`, quando informado, é chamado a cada segmento reconhecido como
     progresso(segundos_processados, duracao_total).
+
+    `vocabulario` semeia o reconhecimento com termos e siglas do domínio, o que
+    corrige jargão que o modelo erraria por não esperar aquelas palavras.
     """
     if not os.path.isfile(caminho):
         raise FileNotFoundError("Arquivo não encontrado: {0}".format(caminho))
 
     model = carregar_modelo(modelo)
+    prompt, truncado = preparar_vocabulario(vocabulario, modelo)
+    if truncado:
+        print("Aviso: o vocabulário passou de {0} tokens e foi cortado.".format(
+            LIMITE_TOKENS_VOCABULARIO), file=sys.stderr)
 
     # vad_filter descarta o silêncio: acelera a transcrição e evita o modo de
     # falha do Whisper de repetir a mesma frase em loop em trechos mudos.
@@ -115,6 +147,7 @@ def transcrever(caminho, text_output_path=None, idioma="pt-BR", modelo=MODELO_PA
         language=codigo_idioma(idioma),
         beam_size=5,
         vad_filter=True,
+        initial_prompt=prompt,
     )
 
     # `segmentos_brutos` é um gerador: a transcrição só ocorre ao iterar, o que
@@ -142,9 +175,9 @@ def transcrever(caminho, text_output_path=None, idioma="pt-BR", modelo=MODELO_PA
 
 
 def transcribe_audio_to_text(audio_path, text_output_path=None, idioma="pt-BR",
-                             modelo=MODELO_PADRAO, progresso=None):
+                             modelo=MODELO_PADRAO, progresso=None, vocabulario=None):
     """Alias mantido para não quebrar importações existentes."""
-    return transcrever(audio_path, text_output_path, idioma, modelo, progresso)
+    return transcrever(audio_path, text_output_path, idioma, modelo, progresso, vocabulario)
 
 
 def _mmss(segundos):
@@ -164,6 +197,8 @@ def main(argv=None):
                         help="idioma do áudio (ex.: en-US); vazio deixa o Whisper detectar")
     parser.add_argument('-m', '--modelo', default=MODELO_PADRAO, choices=MODELOS,
                         help="modelo Whisper: maiores são mais precisos e mais lentos")
+    parser.add_argument('-v', '--vocabulario', default=None,
+                        help="termos e siglas do domínio, para o modelo acertar o jargão")
     args = parser.parse_args(argv)
 
     def progresso(processado, total):
@@ -173,7 +208,8 @@ def main(argv=None):
                 end='', file=sys.stderr)
 
     try:
-        resultado = transcrever(args.entrada, args.saida, args.idioma, args.modelo, progresso)
+        resultado = transcrever(args.entrada, args.saida, args.idioma, args.modelo,
+                                progresso, args.vocabulario)
     except (OSError, ValueError, RuntimeError) as erro:
         print("Erro: {0}".format(erro), file=sys.stderr)
         return 1

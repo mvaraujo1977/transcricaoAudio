@@ -7,8 +7,8 @@ import tempfile
 
 import streamlit as st
 
-from audioTranscricao import (MODELO_PADRAO, MODELOS, inicio_dos_paragrafos,
-                              transcrever)
+from audioTranscricao import (LIMITE_TOKENS_VOCABULARIO, MODELO_PADRAO, MODELOS,
+                              inicio_dos_paragrafos, preparar_vocabulario, transcrever)
 from gerar_pdf import transcricao_para_pdf
 
 FORMATOS_ACEITOS = ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aiff', 'mp4', 'mkv', 'avi', 'mov']
@@ -23,6 +23,11 @@ IDIOMAS = {
     'Alemão': 'de-DE',
     'Detectar automaticamente': None,
 }
+
+PLACEHOLDER_VOCABULARIO = (
+    "Princípios da administração pública: LIMPE, legalidade, impessoalidade, "
+    "moralidade, publicidade, eficiência. Gabarito, questão, banca."
+)
 
 # Tamanho aproximado do download de cada modelo, para avisar antes da espera.
 TAMANHO_MODELO = {
@@ -60,7 +65,7 @@ def _salvar_upload(upload):
         return temporario.name
 
 
-def _executar_transcricao(caminho, idioma, modelo):
+def _executar_transcricao(caminho, idioma, modelo, vocabulario=None):
     """Roda a transcrição alimentando a barra de progresso e o painel de status."""
     barra = st.progress(0.0, text="Preparando o áudio...")
 
@@ -78,7 +83,8 @@ def _executar_transcricao(caminho, idioma, modelo):
             else:
                 barra.progress(0.0, text="{0} processados".format(_mmss(processado)))
 
-        resultado = transcrever(caminho, idioma=idioma, modelo=modelo, progresso=progresso)
+        resultado = transcrever(caminho, idioma=idioma, modelo=modelo,
+                                progresso=progresso, vocabulario=vocabulario)
         status.update(label="Transcrição concluída", state="complete")
 
     barra.progress(1.0, text="Concluído")
@@ -124,10 +130,26 @@ with st.expander("Opções avançadas"):
         st.info("O modelo **{0}** ({1}) será baixado na primeira transcrição.".format(
             modelo, TAMANHO_MODELO.get(modelo, '')))
 
+    vocabulario = st.text_area(
+        "Vocabulário do domínio (termos e siglas que aparecem no áudio)",
+        placeholder=PLACEHOLDER_VOCABULARIO,
+        height=100,
+        help="Semear o reconhecimento com o jargão do assunto corrige siglas e "
+             "termos técnicos que o modelo erraria por não esperá-los.")
+
+    if vocabulario.strip():
+        # A contagem exata depende do tokenizador do modelo, então o corte é
+        # calculado aqui mesmo para o aviso aparecer antes de rodar.
+        _, truncado = preparar_vocabulario(vocabulario, modelo)
+        if truncado:
+            st.warning("O vocabulário passou de {0} tokens, que é o limite do "
+                       "Whisper. O excedente será ignorado — deixe os termos mais "
+                       "importantes no começo.".format(LIMITE_TOKENS_VOCABULARIO))
+
 if st.button("Transcrever", type="primary", disabled=upload is None):
     caminho = _salvar_upload(upload)
     try:
-        resultado = _executar_transcricao(caminho, idioma, modelo)
+        resultado = _executar_transcricao(caminho, idioma, modelo, vocabulario)
     except (OSError, ValueError, RuntimeError) as erro:
         st.error("Erro: {0}".format(erro))
     else:
