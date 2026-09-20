@@ -142,12 +142,23 @@ def transcrever(caminho, text_output_path=None, idioma="pt-BR", modelo=MODELO_PA
 
     # vad_filter descarta o silêncio: acelera a transcrição e evita o modo de
     # falha do Whisper de repetir a mesma frase em loop em trechos mudos.
+    #
+    # temperature=0.0 desliga o fallback por amostragem. O padrão do
+    # faster-whisper é [0.0, 0.2, ..., 1.0]: quando um segmento estoura os
+    # limiares de compression_ratio ou log_prob, ele é reprocessado com
+    # temperatura crescente, o que é não-determinístico. Duas execuções do mesmo
+    # áudio divergiam em dezenas de palavras (e chegavam a perder um item de uma
+    # enumeração), o que impede comparar transcrições — por exemplo, para medir
+    # se o vocabulário do domínio ajudou. Com 0.0 o segmento difícil sai pior,
+    # mas sai igual toda vez, e a diferença entre duas execuções passa a ser
+    # atribuível ao que mudou de fato.
     segmentos_brutos, info = model.transcribe(
         caminho,
         language=codigo_idioma(idioma),
         beam_size=5,
         vad_filter=True,
         initial_prompt=prompt,
+        temperature=0.0,
     )
 
     # `segmentos_brutos` é um gerador: a transcrição só ocorre ao iterar, o que
