@@ -69,6 +69,7 @@ python audioTranscricao.py reuniao.mp4 -o ata.txt -l en-US -m medium
 | `-o`, `--saida` | arquivo `.txt` de saída | `transcricao_audio.txt` |
 | `-l`, `--idioma` | idioma do áudio (`en-US`, `es-ES`, ...) | `pt-BR` |
 | `-m`, `--modelo` | `tiny`, `base`, `small`, `medium`, `large-v3` | `small` |
+| `-v`, `--vocabulario` | termos e siglas do domínio, para o modelo acertar o jargão | nenhum |
 
 Sai com código 1 em caso de erro.
 
