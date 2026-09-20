@@ -232,6 +232,15 @@ em **[docs/SEGURANCA.md](docs/SEGURANCA.md)**. Em resumo:
 
 ## Licença
 
-Sem licença definida: o repositório não tem arquivo `LICENSE`, então o código não
-está liberado para redistribuição. Para abrir o uso, o caminho é acrescentar um
-`LICENSE` (MIT, por exemplo).
+[MIT](LICENSE) — uso, cópia, modificação e redistribuição liberados, mantendo o
+aviso de copyright e sem garantia.
+
+A licença cobre o código deste repositório. As dependências têm as suas próprias,
+conforme os metadados dos pacotes instalados: `faster-whisper` e CTranslate2 são
+MIT, Streamlit é Apache 2.0, PyAV, NumPy e ReportLab são BSD, e os pesos do
+Whisper, da OpenAI, são MIT.
+
+Uma ressalva prática: o PyAV empacota binários do FFmpeg, que é LGPL (ou GPL,
+conforme a build). Distribuir a **imagem Docker pronta** é redistribuir esses
+binários, então convém conferir as condições do FFmpeg antes de publicá-la —
+rodar localmente, que é o caso deste projeto, não esbarra nisso.
