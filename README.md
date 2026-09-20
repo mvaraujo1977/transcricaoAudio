@@ -9,6 +9,36 @@ A saída vem com pontuação, capitalização e parágrafos, além de timestamps
 segmento, que permitem marcar cada parágrafo do PDF com `[MM:SS]` para voltar ao
 ponto exato do áudio.
 
+## A tela
+
+A interface tem três estados e mostra um de cada vez:
+
+- **Vazio**: título, uma linha dizendo o que a ferramenta faz, o uploader e as
+  opções avançadas recolhidas.
+- **Processando**: os controles ficam desabilitados e um painel único reúne a
+  barra de progresso, o tempo decorrido, a posição no áudio (`08:17 de 37:27`) e
+  a estimativa do que falta. A estimativa vem do ritmo observado na própria
+  execução — segundos de relógio por segundo de áudio —, e não de um número fixo
+  por modelo, que erraria em máquina mais lenta.
+- **Resultado**: uma linha com duração, idioma, segmentos e palavras; o texto
+  transcrito editável; e os dois downloads lado a lado.
+
+Cor, fonte e raio das bordas ficam em `.streamlit/config.toml`, com uma variante
+da cor de destaque para o modo claro e outra para o escuro — sem `base` definido,
+a tela segue a preferência do navegador. O menu e o botão Deploy saem pelo
+`toolbarMode = "minimal"`, e o empilhamento das colunas em tela estreita é o
+comportamento padrão do `st.columns`, abaixo de 640 px. Sobrou um único bloco de
+CSS em `app.py`, para o espaçamento do bloco principal, e ele usa seletor
+`[data-testid=...]`: as classes que o Streamlit gera mudam de nome a cada
+atualização e não servem de apoio.
+
+`verificar_layout.py` carrega a tela nos três estados com o AppTest, sem
+navegador e sem transcrever nada:
+
+```bash
+python verificar_layout.py
+```
+
 ## Com Docker (recomendado)
 
 Sobe a interface em http://localhost:8501:
@@ -386,6 +416,8 @@ python verificar_transcricao.py dados/aula.mp3 small
 | Arquivo | Papel |
 |---|---|
 | `app.py` | interface Streamlit |
+| `.streamlit/config.toml` | tema da interface (cor, fonte, bordas) e toolbar |
 | `audioTranscricao.py` | motor de transcrição e CLI |
 | `gerar_pdf.py` | exportação do texto revisado em PDF |
 | `verificar_transcricao.py` | métricas de qualidade da transcrição |
+| `verificar_layout.py` | confere os três estados da tela com o AppTest |

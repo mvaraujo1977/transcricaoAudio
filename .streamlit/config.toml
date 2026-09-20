@@ -1,0 +1,37 @@
+# Tema da interface. Tudo o que o tema resolve fica aqui, e não em CSS injetado:
+# CSS contra as classes que o Streamlit gera quebra na próxima atualização.
+#
+# `base` fica de fora de propósito -- sem ele a tela segue o modo claro/escuro do
+# navegador, e cada modo recebe abaixo a sua variante da cor de destaque.
+
+[theme]
+# Uma cor de destaque só (botão primário, barra de progresso, foco dos campos).
+# A variante por modo está em [theme.light] / [theme.dark].
+font = "sans-serif"
+headingFont = "sans-serif"
+# Títulos com peso 600: destacam sem pedir um tamanho de fonte a mais.
+headingFontWeights = 600
+# Cantos discretos. "small" é o menor valor que ainda diferencia campo de fundo.
+baseRadius = "small"
+# Borda nos campos em vez de fundo cinza: separa o campo do resto sem sombra.
+showWidgetBorder = true
+
+[theme.light]
+# Teal escuro o bastante para o texto branco do botão primário ficar legível.
+primaryColor = "#0F766E"
+
+[theme.dark]
+# O mesmo teal, clareado: no fundo escuro a versão do modo claro fica apagada.
+primaryColor = "#2DD4BF"
+
+[client]
+# Esvazia o menu (Rerun, Clear cache, Deploy): sem nenhuma entrada sobrando, o
+# Streamlit não desenha a barra do topo -- some o hambúrguer e o botão Deploy sem
+# precisar de CSS. O que resta do cabeçalho é um elemento vazio, transparente e
+# com pointer-events: none, que não ocupa espaço nem intercepta clique.
+toolbarMode = "minimal"
+
+[browser]
+# Mesma telemetria desligada que o Dockerfile passa por flag, para valer também
+# quando a aplicação roda fora do container.
+gatherUsageStats = false

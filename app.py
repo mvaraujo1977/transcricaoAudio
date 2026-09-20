@@ -44,6 +44,25 @@ TAMANHO_MODELO = {
     'large-v3': '~3 GB',
 }
 
+# CSS injetado: entra aqui só o que o tema (.streamlit/config.toml) e as
+# primitivas do Streamlit não resolvem. O seletor é [data-testid=...], que o
+# Streamlit mantém entre versões -- as classes geradas (.st-emotion-cache-...)
+# mudam a cada atualização e não servem de apoio.
+#
+# O que NÃO está aqui, de propósito: o menu e o botão Deploy saem pelo
+# toolbarMode="minimal" do config.toml, e o empilhamento das colunas em tela
+# estreita é nativo -- st.columns(wrap=True), que é o padrão, empilha sozinho
+# em viewport de até 640 px.
+ESTILO = """
+<style>
+/* Respiro do bloco principal. Sem a barra do topo, o padding existe para o
+   título não nascer colado na borda e para o último botão não encostar embaixo;
+   espaçamento de bloco não é exposto pelo tema. Até 640 px o Streamlit aplica
+   um padding maior, que prevalece -- é o que a tela estreita pede. */
+[data-testid="stMainBlockContainer"] { padding-top: 3rem; padding-bottom: 4rem; }
+</style>
+"""
+
 
 def _mmss(segundos):
     """Formata segundos como mm:ss."""
@@ -110,28 +129,52 @@ def _salvar_upload(upload):
 
 
 def _executar_transcricao(caminho, idioma, modelo, vocabulario=None):
-    """Roda a transcrição alimentando a barra de progresso e o painel de status."""
-    barra = st.progress(0.0, text="Preparando o áudio...")
+    """Roda a transcrição desenhando o painel de progresso.
 
-    with st.status("Transcrevendo...", expanded=True) as status:
+    Esta é a tela que a pessoa encara por vários minutos, então mostra três
+    números além da barra: quanto tempo já passou, onde a transcrição está no
+    áudio e quanto falta. A estimativa sai do ritmo observado nesta execução --
+    segundos de relógio por segundo de áudio --, porque o ritmo real depende da
+    máquina, do modelo e do próprio áudio.
+    """
+    inicio = time.monotonic()
+
+    with st.status("Transcrevendo com o modelo {0}...".format(modelo),
+                   expanded=True) as status:
         if not _modelo_baixado(modelo):
             st.write("Baixando o modelo **{0}** ({1}). Isso acontece só na primeira "
                      "execução.".format(modelo, TAMANHO_MODELO.get(modelo, '')))
 
+        barra = st.progress(0.0, text="Preparando o áudio...")
+
+        # A coluna do meio é a mais larga porque o valor dela tem dois relógios
+        # ("08:17 de 37:27") e, em três colunas iguais, invade a vizinha.
+        coluna_a, coluna_b, coluna_c = st.columns([1, 1.6, 1])
+        campo_decorrido = coluna_a.empty()
+        campo_posicao = coluna_b.empty()
+        campo_restante = coluna_c.empty()
+        campo_decorrido.metric("Decorrido", _mmss(0))
+        campo_posicao.metric("Posição no áudio", "--")
+        campo_restante.metric("Restante (estimado)", "--")
+
         def progresso(processado, total):
-            if total:
-                barra.progress(min(processado / total, 1.0),
-                               text="{0} de {1}".format(_mmss(processado), _mmss(total)))
-                status.update(label="Transcrevendo... {0} de {1}".format(
-                    _mmss(processado), _mmss(total)))
-            else:
+            decorrido = time.monotonic() - inicio
+            campo_decorrido.metric("Decorrido", _mmss(decorrido))
+            if not total:
                 barra.progress(0.0, text="{0} processados".format(_mmss(processado)))
+                return
+            fracao = min(processado / total, 1.0)
+            barra.progress(fracao, text="{0:.0f}% do áudio".format(100 * fracao))
+            campo_posicao.metric("Posição no áudio", "{0} de {1}".format(
+                _mmss(processado), _mmss(total)))
+            if processado > 0:
+                restante = decorrido * (total - processado) / processado
+                campo_restante.metric("Restante (estimado)", "~{0}".format(_mmss(restante)))
 
         resultado = transcrever(caminho, idioma=idioma, modelo=modelo,
                                 progresso=progresso, vocabulario=vocabulario)
-        status.update(label="Transcrição concluída", state="complete")
+        status.update(label="Transcrição concluída", state="complete", expanded=False)
 
-    barra.progress(1.0, text="Concluído")
     return resultado
 
 
@@ -155,78 +198,66 @@ def _pdf_em_bytes(texto, nome_origem, idioma):
     return buffer.getvalue()
 
 
-st.set_page_config(page_title="Transcrição de Áudio", page_icon="🎙️", layout="centered")
+def _painel_de_entrada(processando):
+    """Desenha o uploader e as opções; devolve o que foi escolhido.
 
-_varrer_uma_vez()
+    Os widgets continuam na tela durante o processamento, desabilitados: fazê-los
+    sumir deslocaria a página inteira, e deixá-los ativos permitiria trocar o
+    modelo no meio de uma transcrição que já está rodando com o anterior.
+    """
+    upload = st.file_uploader("Arquivo de áudio ou vídeo", type=FORMATOS_ACEITOS,
+                              key='upload', disabled=processando)
 
-st.title("🎙️ Transcrição de Áudio")
-st.caption("Envie um arquivo de áudio ou vídeo e receba a transcrição em texto, "
-           "pronta para revisar e exportar. O reconhecimento roda localmente.")
+    with st.expander("Opções avançadas", expanded=False):
+        rotulo_idioma = st.selectbox("Idioma do áudio", list(IDIOMAS), index=0,
+                                     key='rotulo_idioma', disabled=processando)
+        modelo = st.selectbox("Modelo", MODELOS, index=MODELOS.index(MODELO_PADRAO),
+                              key='modelo', disabled=processando)
+        st.caption("Modelos maiores são mais precisos e mais lentos. `small` costuma "
+                   "equilibrar bem; `medium` e `large-v3` ganham em jargão e nomes "
+                   "próprios, ao custo de várias vezes o tempo de processamento.")
+        if not _modelo_baixado(modelo):
+            st.info("O modelo **{0}** ({1}) será baixado na primeira transcrição.".format(
+                modelo, TAMANHO_MODELO.get(modelo, '')))
 
-upload = st.file_uploader("Arquivo de áudio ou vídeo", type=FORMATOS_ACEITOS)
+        vocabulario = st.text_area(
+            "Vocabulário do domínio (termos e siglas que aparecem no áudio)",
+            placeholder=PLACEHOLDER_VOCABULARIO,
+            height=100,
+            key='vocabulario',
+            disabled=processando,
+            help="Semear o reconhecimento com o jargão do assunto corrige siglas e "
+                 "termos técnicos que o modelo erraria por não esperá-los.")
 
-with st.expander("Opções avançadas"):
-    rotulo_idioma = st.selectbox("Idioma do áudio", list(IDIOMAS), index=0)
-    idioma = IDIOMAS[rotulo_idioma]
-    modelo = st.selectbox("Modelo", MODELOS, index=MODELOS.index(MODELO_PADRAO))
-    st.caption("Modelos maiores são mais precisos e mais lentos. `small` costuma "
-               "equilibrar bem; `medium` e `large-v3` ganham em jargão e nomes "
-               "próprios, ao custo de várias vezes o tempo de processamento.")
-    if not _modelo_baixado(modelo):
-        st.info("O modelo **{0}** ({1}) será baixado na primeira transcrição.".format(
-            modelo, TAMANHO_MODELO.get(modelo, '')))
+        if vocabulario.strip():
+            # A contagem exata depende do tokenizador do modelo, então o corte é
+            # calculado aqui mesmo para o aviso aparecer antes de rodar.
+            _, truncado = preparar_vocabulario(vocabulario, modelo)
+            if truncado:
+                st.warning("O vocabulário passou de {0} tokens, que é o limite do "
+                           "Whisper. O excedente será ignorado -- deixe os termos "
+                           "mais importantes no começo.".format(LIMITE_TOKENS_VOCABULARIO))
 
-    vocabulario = st.text_area(
-        "Vocabulário do domínio (termos e siglas que aparecem no áudio)",
-        placeholder=PLACEHOLDER_VOCABULARIO,
-        height=100,
-        help="Semear o reconhecimento com o jargão do assunto corrige siglas e "
-             "termos técnicos que o modelo erraria por não esperá-los.")
+    clicou = st.button("Transcrever", type="primary", width="stretch",
+                       disabled=processando or upload is None)
+    return upload, IDIOMAS[rotulo_idioma], modelo, vocabulario, clicou
 
-    if vocabulario.strip():
-        # A contagem exata depende do tokenizador do modelo, então o corte é
-        # calculado aqui mesmo para o aviso aparecer antes de rodar.
-        _, truncado = preparar_vocabulario(vocabulario, modelo)
-        if truncado:
-            st.warning("O vocabulário passou de {0} tokens, que é o limite do "
-                       "Whisper. O excedente será ignorado — deixe os termos mais "
-                       "importantes no começo.".format(LIMITE_TOKENS_VOCABULARIO))
 
-if st.button("Transcrever", type="primary", disabled=upload is None):
-    # _salvar_upload fica DENTRO do try: um nome de arquivo hostil vira st.error
-    # em vez de um traceback do Streamlit expondo caminhos do sistema.
-    caminho = None
-    try:
-        caminho = _salvar_upload(upload)
-        resultado = _executar_transcricao(caminho, idioma, modelo, vocabulario)
-    except (OSError, ValueError, RuntimeError) as erro:
-        st.error("Erro: {0}".format(erro))
-    else:
-        # Sem o session_state, qualquer interação na tela dispara um rerun e a
-        # transcrição (que custou minutos) seria perdida.
-        st.session_state['texto_editado'] = resultado.texto
-        st.session_state['segmentos'] = resultado.segmentos
-        st.session_state['duracao'] = resultado.duracao
-        st.session_state['idioma_detectado'] = resultado.idioma_detectado
-        st.session_state['nome_origem'] = upload.name
-        st.session_state['idioma'] = idioma or resultado.idioma_detectado
-    finally:
-        if caminho:
-            with contextlib.suppress(OSError):
-                os.remove(caminho)
+def _painel_de_resultado():
+    """Desenha as métricas, o texto editável e os dois downloads."""
+    segmentos = st.session_state.get('segmentos') or []
+    texto_atual = st.session_state.get('texto_editado') or ''
 
-if 'texto_editado' in st.session_state:
-    st.divider()
-
-    coluna_a, coluna_b, coluna_c = st.columns(3)
+    coluna_a, coluna_b, coluna_c, coluna_d = st.columns(4)
     coluna_a.metric("Duração", _mmss(st.session_state.get('duracao')))
-    coluna_b.metric("Idioma detectado", st.session_state.get('idioma_detectado') or '—')
-    coluna_c.metric("Segmentos", len(st.session_state.get('segmentos') or []))
+    coluna_b.metric("Idioma", st.session_state.get('idioma_detectado') or '--')
+    coluna_c.metric("Segmentos", len(segmentos))
+    coluna_d.metric("Palavras", len(texto_atual.split()))
 
     st.subheader("Transcrição")
-    st.caption("O reconhecimento pode errar nomes próprios e siglas — corrija o "
+    st.caption("O reconhecimento pode errar nomes próprios e siglas -- corrija o "
                "texto aqui antes de exportar.")
-    texto = st.text_area("Texto transcrito", height=400, key="texto_editado",
+    texto = st.text_area("Texto transcrito", height=420, key='texto_editado',
                          label_visibility="collapsed")
 
     com_tempo = st.checkbox(
@@ -234,21 +265,19 @@ if 'texto_editado' in st.session_state:
         help="Prefixa cada parágrafo com [MM:SS], para voltar ao ponto exato do áudio.")
 
     nome_origem = st.session_state.get('nome_origem')
-    idioma_usado = st.session_state.get('idioma')
     nome_base = _nome_base(nome_origem)
-    segmentos = st.session_state.get('segmentos') or []
-
+    idioma_usado = st.session_state.get('idioma_escolhido')
     texto_pdf = _com_marcacao_de_tempo(texto, segmentos) if com_tempo else texto
 
     coluna_txt, coluna_pdf = st.columns(2)
     with coluna_txt:
         st.download_button(
-            "⬇️ Baixar .txt",
+            "Baixar .txt",
             data=texto.encode('utf-8'),
             file_name="{0}.txt".format(nome_base),
             mime='text/plain',
             disabled=not texto.strip(),
-            use_container_width=True)
+            width="stretch")
     with coluna_pdf:
         try:
             pdf = _pdf_em_bytes(texto_pdf, nome_origem, idioma_usado) if texto.strip() else b''
@@ -256,9 +285,70 @@ if 'texto_editado' in st.session_state:
             st.error("Erro ao gerar o PDF: {0}".format(erro))
         else:
             st.download_button(
-                "⬇️ Baixar .pdf",
+                "Baixar .pdf",
                 data=pdf,
                 file_name="{0}.pdf".format(nome_base),
                 mime='application/pdf',
                 disabled=not texto.strip(),
-                use_container_width=True)
+                width="stretch")
+
+
+st.set_page_config(page_title="Transcrição de áudio", page_icon="🎙️", layout="centered")
+
+_varrer_uma_vez()
+st.markdown(ESTILO, unsafe_allow_html=True)
+
+# A tela tem três estados e mostra um de cada vez: VAZIO (só a entrada),
+# PROCESSANDO (entrada desabilitada mais o painel de progresso) e RESULTADO
+# (entrada mais o texto transcrito). O session_state é o que os separa -- e
+# também o que preserva uma transcrição que custou minutos, já que qualquer
+# interação na tela dispara um rerun.
+processando = st.session_state.get('processando', False)
+
+st.title("Transcrição de áudio")
+st.caption("Transcreve arquivos de áudio e vídeo em texto editável, com exportação "
+           "em .txt e .pdf. O reconhecimento roda nesta máquina: nenhum arquivo é "
+           "enviado para fora.")
+
+upload, idioma, modelo, vocabulario, clicou = _painel_de_entrada(processando)
+
+if clicou:
+    # O clique só liga o estado e volta: a transcrição roda no rerun seguinte,
+    # que já desenha os controles desabilitados antes de começar o trabalho.
+    st.session_state['processando'] = True
+    st.session_state.pop('erro', None)
+    st.rerun()
+
+if processando:
+    # Desligado antes de rodar: se a transcrição falhar, a tela volta ao estado
+    # de entrada em vez de ficar presa em "processando".
+    st.session_state['processando'] = False
+    # _salvar_upload fica DENTRO do try: um nome de arquivo hostil vira st.error
+    # em vez de um traceback do Streamlit expondo caminhos do sistema.
+    caminho = None
+    try:
+        caminho = _salvar_upload(upload)
+        resultado = _executar_transcricao(caminho, idioma, modelo, vocabulario)
+    except (OSError, ValueError, RuntimeError) as erro:
+        # O erro viaja pelo session_state porque o rerun logo abaixo apagaria
+        # qualquer st.error escrito aqui.
+        st.session_state['erro'] = str(erro)
+    else:
+        st.session_state['texto_editado'] = resultado.texto
+        st.session_state['segmentos'] = resultado.segmentos
+        st.session_state['duracao'] = resultado.duracao
+        st.session_state['idioma_detectado'] = resultado.idioma_detectado
+        st.session_state['nome_origem'] = upload.name
+        st.session_state['idioma_escolhido'] = idioma or resultado.idioma_detectado
+    finally:
+        if caminho:
+            with contextlib.suppress(OSError):
+                os.remove(caminho)
+    st.rerun()
+
+if st.session_state.get('erro'):
+    st.error("Erro: {0}".format(st.session_state['erro']))
+
+if 'texto_editado' in st.session_state:
+    st.divider()
+    _painel_de_resultado()
