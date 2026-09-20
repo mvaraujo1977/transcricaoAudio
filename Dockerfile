@@ -9,8 +9,13 @@ WORKDIR /app
 
 # As dependências entram antes do código: assim uma alteração em app.py não
 # invalida a camada de instalação, que é a cara.
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+#
+# Instala o .lock, não o requirements.txt: este último só traz pisos (>=1.0) e
+# cada build resolveria para o que estivesse no PyPI naquele dia -- build não
+# reproduzível, e uma versão comprometida de qualquer dependência transitiva
+# entraria sem aviso. O lock é gerado dentro desta mesma imagem; veja o README.
+COPY requirements.lock.txt .
+RUN pip install --no-cache-dir -r requirements.lock.txt
 
 ENV HF_HOME=/app/.cache/huggingface
 

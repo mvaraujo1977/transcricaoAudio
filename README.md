@@ -105,6 +105,27 @@ Sai com código 1 em caso de erro.
 Na primeira execução fora do Docker, o modelo escolhido é baixado para o cache do
 Hugging Face (`~/.cache/huggingface`) — são centenas de MB.
 
+## Dependências
+
+`requirements.txt` declara as dependências diretas com pisos de versão, para
+instalar à mão fora do Docker. A **imagem instala `requirements.lock.txt`**, que
+fixa as 51 versões exatas já testadas — sem isso, cada `docker build` resolveria
+para o que estivesse no PyPI naquele dia, e uma dependência transitiva
+comprometida entraria sem aviso.
+
+O lock precisa ser gerado **dentro da imagem alvo**, não no venv de
+desenvolvimento: um lock feito no Python 3.14 do Windows inclui pacotes que nem
+existem para o Python 3.12 da imagem (`audioop-lts`, por exemplo, só existe a
+partir do 3.13) e quebra o build.
+
+Para atualizar as dependências:
+
+```bash
+docker run --rm -i python:3.12-slim   sh -c 'cat > /tmp/r.txt; pip install -q --no-cache-dir -r /tmp/r.txt >&2 && pip freeze'   < requirements.txt > requirements.lock.txt
+```
+
+Depois reconstrua e teste antes de commitar: `docker compose build && docker compose up -d`.
+
 ## Escolha do modelo
 
 | Modelo | Download | Precisão | Velocidade |

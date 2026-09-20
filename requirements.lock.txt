@@ -1,16 +1,16 @@
+# Gerado DENTRO da imagem alvo (python:3.12-slim), nao no venv de
+# desenvolvimento: o lock precisa casar com o interpretador que vai roda-lo.
+# Regenerar com o comando documentado no README.
 altair==6.3.0
 anyio==4.15.1
 attrs==26.1.0
-audioop-lts==0.2.2
 av==18.1.0
 certifi==2026.7.22
 charset-normalizer==3.5.1
 click==8.5.0
-colorama==0.4.6
 ctranslate2==4.8.2
-decorator==5.3.1
 faster-whisper==1.2.1
-filelock==4.0.0
+filelock==4.0.1
 flatbuffers==25.12.19
 fsspec==2026.9.0
 h11==0.16.0
@@ -20,8 +20,6 @@ httptools==0.8.0
 httpx==0.28.1
 huggingface_hub==1.32.0
 idna==3.20
-ImageIO==2.37.4
-imageio-ffmpeg==0.6.0
 itsdangerous==2.2.0
 Jinja2==3.1.6
 jsonschema==4.26.0
@@ -32,13 +30,11 @@ numpy==2.5.3
 onnxruntime==1.30.0
 packaging==26.3
 pandas==3.0.6
-pillow==11.3.0
-proglog==0.1.12
+pillow==12.3.0
 protobuf==7.36.2
 pyarrow==25.0.1
 pydeck==0.9.3
 python-dateutil==2.9.0.post0
-python-dotenv==1.2.3
 python-multipart==0.0.32
 PyYAML==6.0.3
 referencing==0.37.0
@@ -46,15 +42,12 @@ reportlab==5.0.1
 requests==2.34.2
 rpds-py==2026.6.3
 six==1.17.0
-standard-aifc==3.13.0
-standard-chunk==3.13.0
 starlette==1.6.0
 streamlit==1.64.0
 tokenizers==0.23.2
 toml==0.10.2
 tqdm==4.70.1
 typing_extensions==4.16.0
-tzdata==2026.4
 urllib3==2.8.0
 uvicorn==0.53.0
 watchdog==6.0.0
