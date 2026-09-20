@@ -4,6 +4,7 @@ import contextlib
 import io
 import os
 import tempfile
+import time
 
 import streamlit as st
 
@@ -12,6 +13,11 @@ from audioTranscricao import (LIMITE_TOKENS_VOCABULARIO, MODELO_PADRAO, MODELOS,
 from gerar_pdf import transcricao_para_pdf
 
 FORMATOS_ACEITOS = ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aiff', 'mp4', 'mkv', 'avi', 'mov']
+
+# O prefixo marca os temporários como nossos, para a varredura de órfãos não
+# tocar em arquivos de outros programas.
+PREFIXO_TEMPORARIO = 'transcricaoAudio_'
+IDADE_MAXIMA_TEMPORARIO = 24 * 3600
 
 IDIOMAS = {
     'Português (Brasil)': 'pt-BR',
@@ -57,10 +63,48 @@ def _modelo_baixado(nome_modelo):
     return os.path.isdir(pasta)
 
 
+def _limpar_temporarios_orfaos():
+    """Remove temporários nossos com mais de 24 h.
+
+    O `finally` da transcrição cobre erro e rerun, mas não um SIGKILL -- que já
+    aconteceu com esta aplicação, morta pelo sistema por falta de memória. Sem
+    a varredura, cada morte dessas deixa para trás um arquivo do tamanho de um
+    vídeo de reunião.
+    """
+    pasta = tempfile.gettempdir()
+    limite = time.time() - IDADE_MAXIMA_TEMPORARIO
+    with contextlib.suppress(OSError):
+        for nome in os.listdir(pasta):
+            if not nome.startswith(PREFIXO_TEMPORARIO):
+                continue
+            caminho = os.path.join(pasta, nome)
+            with contextlib.suppress(OSError):
+                if os.path.isfile(caminho) and os.path.getmtime(caminho) < limite:
+                    os.remove(caminho)
+
+
+@st.cache_resource
+def _varrer_uma_vez():
+    """Roda a varredura uma vez por processo, não a cada rerun da tela."""
+    _limpar_temporarios_orfaos()
+    return True
+
+
 def _salvar_upload(upload):
-    """Grava o upload num arquivo temporário preservando a extensão original."""
-    sufixo = os.path.splitext(upload.name)[1] or '.wav'
-    with tempfile.NamedTemporaryFile(delete=False, suffix=sufixo) as temporario:
+    """Grava o upload num arquivo temporário, com extensão vinda da lista branca.
+
+    O nome enviado é controlado por quem envia e nunca vira caminho: só a
+    extensão é aproveitada, e mesmo ela é conferida contra FORMATOS_ACEITOS
+    antes de virar sufixo. Repassar o sufixo cru deixava passar uma extensão
+    com byte nulo, que rebentava o tempfile com um ValueError não tratado.
+    """
+    extensao = os.path.splitext(upload.name or '')[1].lower().lstrip('.')
+    if extensao not in FORMATOS_ACEITOS:
+        raise ValueError(
+            "Extensão não aceita: {0!r}. Use um destes formatos: {1}.".format(
+                extensao or '(sem extensão)', ', '.join(FORMATOS_ACEITOS)))
+    with tempfile.NamedTemporaryFile(delete=False, prefix=PREFIXO_TEMPORARIO,
+                                     suffix='.' + extensao) as temporario:
         temporario.write(upload.getbuffer())
         return temporario.name
 
@@ -113,6 +157,8 @@ def _pdf_em_bytes(texto, nome_origem, idioma):
 
 st.set_page_config(page_title="Transcrição de Áudio", page_icon="🎙️", layout="centered")
 
+_varrer_uma_vez()
+
 st.title("🎙️ Transcrição de Áudio")
 st.caption("Envie um arquivo de áudio ou vídeo e receba a transcrição em texto, "
            "pronta para revisar e exportar. O reconhecimento roda localmente.")
@@ -147,8 +193,11 @@ with st.expander("Opções avançadas"):
                        "importantes no começo.".format(LIMITE_TOKENS_VOCABULARIO))
 
 if st.button("Transcrever", type="primary", disabled=upload is None):
-    caminho = _salvar_upload(upload)
+    # _salvar_upload fica DENTRO do try: um nome de arquivo hostil vira st.error
+    # em vez de um traceback do Streamlit expondo caminhos do sistema.
+    caminho = None
     try:
+        caminho = _salvar_upload(upload)
         resultado = _executar_transcricao(caminho, idioma, modelo, vocabulario)
     except (OSError, ValueError, RuntimeError) as erro:
         st.error("Erro: {0}".format(erro))
@@ -162,8 +211,9 @@ if st.button("Transcrever", type="primary", disabled=upload is None):
         st.session_state['nome_origem'] = upload.name
         st.session_state['idioma'] = idioma or resultado.idioma_detectado
     finally:
-        with contextlib.suppress(OSError):
-            os.remove(caminho)
+        if caminho:
+            with contextlib.suppress(OSError):
+                os.remove(caminho)
 
 if 'texto_editado' in st.session_state:
     st.divider()
