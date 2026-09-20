@@ -49,6 +49,20 @@ VARIAVEL_LIMITE = 'TRANSCRICAO_MAX_HORAS'
 # formato evita uma reamostragem depois.
 TAXA_WHISPER = 16000
 
+# As duas fases que o callback de progresso distingue. A decodificação vem antes
+# da transcrição e pode levar dezenas de segundos num arquivo longo; sem avisar
+# dela, quem espera não vê nada acontecer -- e, na interface, o botão de cancelar
+# fica sem resposta, porque o Streamlit só processa o clique quando o script
+# passa por uma chamada dele.
+FASE_PREPARO = 'preparo'
+FASE_TRANSCRICAO = 'transcricao'
+
+# Um aviso de progresso a cada minuto de áudio decodificado. A decodificação
+# corre bem mais rápido que o tempo real (minutos de áudio por segundo), então
+# isso dá alguns avisos por segundo: o suficiente para o cancelamento responder
+# sem encher a tela de atualizações.
+INTERVALO_PREPARO = 60.0
+
 Segmento = collections.namedtuple('Segmento', 'start end text')
 
 Transcricao = collections.namedtuple(
@@ -141,7 +155,7 @@ def sondar_duracao(caminho):
     return None
 
 
-def decodificar_audio(caminho, limite_segundos):
+def decodificar_audio(caminho, limite_segundos, progresso=None, total_estimado=None):
     """Decodifica para float32 mono 16 kHz, abortando ao passar do teto.
 
     Este é o portão que de fato fecha: conta amostras durante a decodificação e
@@ -150,6 +164,12 @@ def decodificar_audio(caminho, limite_segundos):
 
     O formato de saída (float32 normalizado a partir de s16) é idêntico ao que
     o faster_whisper.audio.decode_audio produz, para a transcrição não mudar.
+
+    `progresso`, quando informado, é chamado a cada INTERVALO_PREPARO segundos de
+    áudio lidos como progresso(segundos_lidos, total_estimado, FASE_PREPARO).
+    `total_estimado` é a duração declarada no cabeçalho, que pode ser mentira ou
+    não existir -- serve para a barra, nunca como limite; quem limita é a
+    contagem de amostras abaixo.
     """
     # --sem-limite chega aqui como infinito, que não vira int: nesse caso não há
     # teto a comparar e a contagem serve só para saber se veio algum áudio.
@@ -157,9 +177,10 @@ def decodificar_audio(caminho, limite_segundos):
     resampler = av.AudioResampler(format='s16', layout='mono', rate=TAXA_WHISPER)
     blocos = []
     total = 0
+    proximo_aviso = INTERVALO_PREPARO
 
     def acumular(quadros):
-        nonlocal total
+        nonlocal total, proximo_aviso
         for convertido in quadros or []:
             bloco = convertido.to_ndarray().reshape(-1)
             total += bloco.shape[0]
@@ -169,6 +190,10 @@ def decodificar_audio(caminho, limite_segundos):
                     "--sem-limite na linha de comando se o arquivo for seu.".format(
                         _duracao_legivel(limite_segundos), VARIAVEL_LIMITE))
             blocos.append(bloco)
+            segundos = total / float(TAXA_WHISPER)
+            if progresso is not None and segundos >= proximo_aviso:
+                progresso(segundos, total_estimado, FASE_PREPARO)
+                proximo_aviso = segundos + INTERVALO_PREPARO
 
     with av.open(caminho) as container:
         if not container.streams.audio:
@@ -234,11 +259,17 @@ def inicio_dos_paragrafos(segmentos):
 
 
 def transcrever(caminho, text_output_path=None, idioma="pt-BR", modelo=MODELO_PADRAO,
-                progresso=None, vocabulario=None, max_horas=None):
+                progresso=None, vocabulario=None, max_horas=None, ao_segmento=None):
     """Transcreve `caminho` e devolve um Transcricao.
 
-    `progresso`, quando informado, é chamado a cada segmento reconhecido como
-    progresso(segundos_processados, duracao_total).
+    `progresso`, quando informado, é chamado como
+    progresso(segundos_processados, duracao_total, fase): durante o preparo, a
+    cada trecho decodificado, com fase=FASE_PREPARO; depois, a cada segmento
+    reconhecido, com fase=FASE_TRANSCRICAO.
+
+    `ao_segmento`, quando informado, recebe cada Segmento assim que ele fica
+    pronto. Serve para quem precisa guardar o trabalho parcial: se a chamada for
+    interrompida no meio, o que já saiu continua nas mãos de quem chamou.
 
     `vocabulario` semeia o reconhecimento com termos e siglas do domínio, o que
     corrige jargão que o modelo erraria por não esperar aquelas palavras.
@@ -261,7 +292,8 @@ def transcrever(caminho, text_output_path=None, idioma="pt-BR", modelo=MODELO_PA
                 _duracao_legivel(declarada), _duracao_legivel(limite_segundos),
                 VARIAVEL_LIMITE))
 
-    audio = decodificar_audio(caminho, limite_segundos)
+    audio = decodificar_audio(caminho, limite_segundos, progresso=progresso,
+                              total_estimado=declarada)
 
     model = carregar_modelo(modelo)
     prompt, truncado = preparar_vocabulario(vocabulario, modelo)
@@ -297,9 +329,12 @@ def transcrever(caminho, text_output_path=None, idioma="pt-BR", modelo=MODELO_PA
     # dá progresso real sem dividir o áudio em blocos artificiais.
     segmentos = []
     for segmento in segmentos_brutos:
-        segmentos.append(Segmento(segmento.start, segmento.end, segmento.text))
+        pronto = Segmento(segmento.start, segmento.end, segmento.text)
+        segmentos.append(pronto)
+        if ao_segmento is not None:
+            ao_segmento(pronto)
         if progresso is not None:
-            progresso(min(segmento.end, info.duration), info.duration)
+            progresso(min(segmento.end, info.duration), info.duration, FASE_TRANSCRICAO)
 
     if not segmentos:
         raise RuntimeError("Nenhuma fala foi reconhecida no arquivo")
@@ -312,17 +347,17 @@ def transcrever(caminho, text_output_path=None, idioma="pt-BR", modelo=MODELO_PA
         print("Transcrição salva em: {0}".format(text_output_path))
 
     if progresso is not None:
-        progresso(info.duration, info.duration)
+        progresso(info.duration, info.duration, FASE_TRANSCRICAO)
 
     return Transcricao(texto, segmentos, info.duration, info.language)
 
 
 def transcribe_audio_to_text(audio_path, text_output_path=None, idioma="pt-BR",
                              modelo=MODELO_PADRAO, progresso=None, vocabulario=None,
-                             max_horas=None):
+                             max_horas=None, ao_segmento=None):
     """Alias mantido para não quebrar importações existentes."""
     return transcrever(audio_path, text_output_path, idioma, modelo, progresso,
-                       vocabulario, max_horas)
+                       vocabulario, max_horas, ao_segmento)
 
 
 def _mmss(segundos):
@@ -351,8 +386,11 @@ def main(argv=None):
                         help="desliga o teto de duração; use só em arquivo de origem confiável")
     args = parser.parse_args(argv)
 
-    def progresso(processado, total):
-        if total:
+    def progresso(processado, total, fase=FASE_TRANSCRICAO):
+        if fase == FASE_PREPARO:
+            print("\r  preparando: {0} lidos".format(_mmss(processado)),
+                  end='', file=sys.stderr)
+        elif total:
             print("\r  {0} de {1} ({2:.0f}%)".format(
                 _mmss(processado), _mmss(total), 100.0 * processado / total),
                 end='', file=sys.stderr)

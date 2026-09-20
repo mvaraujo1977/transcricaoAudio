@@ -8,8 +8,10 @@ import time
 
 import streamlit as st
 
-from audioTranscricao import (LIMITE_TOKENS_VOCABULARIO, MODELO_PADRAO, MODELOS,
-                              inicio_dos_paragrafos, preparar_vocabulario, transcrever)
+from audioTranscricao import (FASE_PREPARO, FASE_TRANSCRICAO,
+                              LIMITE_TOKENS_VOCABULARIO, MODELO_PADRAO, MODELOS,
+                              agrupar_em_paragrafos, inicio_dos_paragrafos,
+                              preparar_vocabulario, transcrever)
 from gerar_pdf import transcricao_para_pdf
 
 FORMATOS_ACEITOS = ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aiff', 'mp4', 'mkv', 'avi', 'mov']
@@ -134,6 +136,19 @@ def _salvar_upload(upload):
         return temporario.name
 
 
+def _pedir_cancelamento():
+    """Marca o pedido de cancelamento, antes do rerun que interrompe o script.
+
+    Callback de widget roda no começo do rerun, antes do corpo do script, então
+    a marca já está posta quando a tela decide o que fazer. O `execucao_ativa`
+    evita transformar em cancelamento um clique que chegou tarde: se a
+    transcrição terminou antes de o Streamlit processar o clique, não há o que
+    cancelar, e o resultado completo não pode virar parcial.
+    """
+    if st.session_state.get('execucao_ativa'):
+        st.session_state['cancelado'] = True
+
+
 def _executar_transcricao(caminho, idioma, modelo, vocabulario=None):
     """Roda a transcrição desenhando o painel de progresso.
 
@@ -142,16 +157,23 @@ def _executar_transcricao(caminho, idioma, modelo, vocabulario=None):
     áudio e quanto falta. A estimativa sai do ritmo observado nesta execução --
     segundos de relógio por segundo de áudio --, porque o ritmo real depende da
     máquina, do modelo e do próprio áudio.
+
+    O script do Streamlit roda numa thread só e fica preso aqui dentro: o clique
+    em Cancelar só é processado quando o script passa por uma chamada do
+    Streamlit, e é por isso que o callback de progresso atualiza a tela também
+    durante a decodificação, que não transcreve nada.
     """
     inicio = time.monotonic()
+    # Lista no session_state, não local: quando o cancelamento desmonta a pilha,
+    # a lista local iria junto e os minutos já transcritos se perderiam.
+    st.session_state['segmentos_parciais'] = []
 
-    with st.status("Transcrevendo com o modelo {0}...".format(modelo),
-                   expanded=True) as status:
+    with st.status("Preparando o áudio...", expanded=True) as status:
         if not _modelo_baixado(modelo):
             st.write("Baixando o modelo **{0}** ({1}). Isso acontece só na primeira "
                      "execução.".format(modelo, TAMANHO_MODELO.get(modelo, '')))
 
-        barra = st.progress(0.0, text="Preparando o áudio...")
+        barra = st.progress(0.0, text="Lendo o arquivo...")
 
         # A coluna do meio é a mais larga porque o valor dela tem dois relógios
         # ("08:17 de 37:27") e, em três colunas iguais, invade a vizinha.
@@ -163,12 +185,47 @@ def _executar_transcricao(caminho, idioma, modelo, vocabulario=None):
         campo_posicao.metric("Posição no áudio", "--")
         campo_restante.metric("Restante (estimado)", "--")
 
-        def progresso(processado, total):
+        # Secundário de propósito: cancelar é desistir, não corrigir um erro.
+        # Fica desenhado antes de o trabalho começar, senão não existiria na
+        # tela justamente enquanto o script está ocupado.
+        st.button("Cancelar", key='cancelar', on_click=_pedir_cancelamento,
+                  help="Interrompe a transcrição. O que já tiver sido "
+                       "reconhecido é mantido na tela.")
+
+        anunciou_transcricao = False
+
+        def progresso(processado, total, fase=FASE_TRANSCRICAO):
+            nonlocal anunciou_transcricao
             decorrido = time.monotonic() - inicio
             campo_decorrido.metric("Decorrido", _mmss(decorrido))
+
+            if fase == FASE_PREPARO:
+                # Ainda não há transcrição: posição e estimativa continuam em
+                # "--". A barra mostra o quanto do arquivo já foi lido, contra a
+                # duração declarada no cabeçalho -- que pode não existir.
+                if total:
+                    barra.progress(min(processado / total, 1.0),
+                                   text="Preparando o áudio — {0} de {1} lidos".format(
+                                       _mmss(processado), _mmss(total)))
+                else:
+                    barra.progress(0.0, text="Preparando o áudio — {0} lidos".format(
+                        _mmss(processado)))
+                return
+
+            if not anunciou_transcricao:
+                # `expanded=True` é obrigatório aqui: st.status.update() sem ele
+                # recolhe o painel, e recolhido o Streamlit tira o conteúdo do
+                # DOM -- barra, números e o próprio botão de cancelar sumiriam
+                # da tela justamente enquanto a transcrição corre. Anunciar uma
+                # vez, na virada de fase, também evita refazer isso a cada
+                # segmento.
+                status.update(label="Transcrevendo com o modelo {0}...".format(modelo),
+                              expanded=True)
+                anunciou_transcricao = True
             if not total:
                 barra.progress(0.0, text="{0} processados".format(_mmss(processado)))
                 return
+            st.session_state['duracao_audio'] = total
             fracao = min(processado / total, 1.0)
             barra.progress(fracao, text="{0:.0f}% do áudio".format(100 * fracao))
             campo_posicao.metric("Posição no áudio", "{0} de {1}".format(
@@ -177,11 +234,35 @@ def _executar_transcricao(caminho, idioma, modelo, vocabulario=None):
                 restante = decorrido * (total - processado) / processado
                 campo_restante.metric("Restante (estimado)", "~{0}".format(_mmss(restante)))
 
+        def guardar_segmento(segmento):
+            st.session_state['segmentos_parciais'].append(segmento)
+
         resultado = transcrever(caminho, idioma=idioma, modelo=modelo,
-                                progresso=progresso, vocabulario=vocabulario)
+                                progresso=progresso, vocabulario=vocabulario,
+                                ao_segmento=guardar_segmento)
         status.update(label="Transcrição concluída", state="complete", expanded=False)
 
     return resultado
+
+
+def _transcrever_upload(upload, idioma, modelo, vocabulario=None):
+    """Grava o upload, transcreve e apaga o temporário aconteça o que acontecer.
+
+    O `finally` cobre o erro, o rerun e também o cancelamento: o Streamlit
+    interrompe o script levantando uma exceção que herda de BaseException, e por
+    isso ela passa direto pelos `except` da tela -- mas não pelo `finally`.
+
+    _salvar_upload fica DENTRO do try: um nome de arquivo hostil vira st.error
+    em vez de um traceback do Streamlit expondo caminhos do sistema.
+    """
+    caminho = None
+    try:
+        caminho = _salvar_upload(upload)
+        return _executar_transcricao(caminho, idioma, modelo, vocabulario)
+    finally:
+        if caminho:
+            with contextlib.suppress(OSError):
+                os.remove(caminho)
 
 
 def _com_marcacao_de_tempo(texto, segmentos):
@@ -289,6 +370,16 @@ def _painel_de_resultado():
     segmentos = st.session_state.get('segmentos') or []
     texto_atual = st.session_state.get('texto_editado') or ''
 
+    parcial_ate = st.session_state.get('parcial_ate')
+    if parcial_ate is not None:
+        # O aviso fica enquanto o texto for parcial, não só no rerun seguinte ao
+        # cancelamento: quem voltar à tela depois precisa saber o que tem em mãos.
+        duracao_total = st.session_state.get('duracao_audio')
+        st.warning("Transcrição cancelada. O texto abaixo cobre o áudio até "
+                   "**{0}**{1} — o restante não chegou a ser transcrito.".format(
+                       _mmss(parcial_ate),
+                       ", de {0}".format(_mmss(duracao_total)) if duracao_total else ""))
+
     coluna_a, coluna_b, coluna_c, coluna_d = st.columns(4)
     coluna_a.metric("Duração", _mmss(st.session_state.get('duracao')))
     coluna_b.metric("Idioma", st.session_state.get('idioma_detectado') or '--')
@@ -364,37 +455,62 @@ if clicou:
     # que já desenha os controles desabilitados antes de começar o trabalho.
     st.session_state['processando'] = True
     st.session_state.pop('erro', None)
+    st.session_state.pop('aviso', None)
     st.rerun()
 
 if processando:
     # Desligado antes de rodar: se a transcrição falhar, a tela volta ao estado
     # de entrada em vez de ficar presa em "processando".
     st.session_state['processando'] = False
-    # _salvar_upload fica DENTRO do try: um nome de arquivo hostil vira st.error
-    # em vez de um traceback do Streamlit expondo caminhos do sistema.
-    caminho = None
+    # Ligado enquanto o trabalho está no ar. Se o cancelamento interromper o
+    # script, esta marca fica de pé e é o que diz ao callback do botão que havia
+    # mesmo uma execução para cancelar.
+    st.session_state['execucao_ativa'] = True
     try:
-        caminho = _salvar_upload(upload)
-        resultado = _executar_transcricao(caminho, idioma, modelo, vocabulario)
+        resultado = _transcrever_upload(upload, idioma, modelo, vocabulario)
     except (OSError, ValueError, RuntimeError) as erro:
         # O erro viaja pelo session_state porque o rerun logo abaixo apagaria
         # qualquer st.error escrito aqui.
+        st.session_state['execucao_ativa'] = False
         st.session_state['erro'] = str(erro)
     else:
+        st.session_state['execucao_ativa'] = False
         st.session_state['texto_editado'] = resultado.texto
         st.session_state['segmentos'] = resultado.segmentos
         st.session_state['duracao'] = resultado.duracao
         st.session_state['idioma_detectado'] = resultado.idioma_detectado
         st.session_state['nome_origem'] = upload.name
         st.session_state['idioma_escolhido'] = idioma or resultado.idioma_detectado
-    finally:
-        if caminho:
-            with contextlib.suppress(OSError):
-                os.remove(caminho)
+        st.session_state.pop('parcial_ate', None)
+        st.session_state.pop('segmentos_parciais', None)
     st.rerun()
+
+if st.session_state.pop('cancelado', False):
+    # A execução foi interrompida no meio: o temporário já saiu no `finally` de
+    # _transcrever_upload, e o que sobrou para decidir é o trabalho parcial.
+    st.session_state['execucao_ativa'] = False
+    parciais = st.session_state.pop('segmentos_parciais', None) or []
+    if parciais:
+        # Os segmentos já reconhecidos viram um resultado normal, editável e
+        # exportável, marcado como parcial para a tela poder avisar até onde vai.
+        st.session_state['texto_editado'] = '\n\n'.join(agrupar_em_paragrafos(parciais))
+        st.session_state['segmentos'] = parciais
+        st.session_state['duracao'] = st.session_state.get('duracao_audio')
+        st.session_state['idioma_detectado'] = None
+        st.session_state['nome_origem'] = upload.name if upload is not None else None
+        st.session_state['idioma_escolhido'] = idioma
+        st.session_state['parcial_ate'] = parciais[-1].end
+    else:
+        # Cancelado antes do primeiro segmento (em geral ainda no preparo): não
+        # há texto a mostrar, e a tela volta ao estado de entrada -- com o
+        # arquivo enviado ainda no uploader, para recomeçar sem reenviar.
+        st.session_state['aviso'] = "Transcrição cancelada."
 
 if st.session_state.get('erro'):
     st.error("Erro: {0}".format(st.session_state['erro']))
+
+if st.session_state.get('aviso'):
+    st.info(st.session_state['aviso'])
 
 if 'texto_editado' in st.session_state:
     st.divider()

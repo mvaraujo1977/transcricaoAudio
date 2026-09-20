@@ -19,12 +19,37 @@ A interface tem três estados e mostra um de cada vez:
   três passos do fluxo em uma frase cada. É o que responde "o que isso faz" a
   quem abre o link sem conhecer o projeto; some assim que houver transcrição.
 - **Processando**: os controles ficam desabilitados e um painel único reúne a
-  barra de progresso, o tempo decorrido, a posição no áudio (`08:17 de 37:27`) e
-  a estimativa do que falta. A estimativa vem do ritmo observado na própria
-  execução — segundos de relógio por segundo de áudio —, e não de um número fixo
-  por modelo, que erraria em máquina mais lenta.
+  barra de progresso, o tempo decorrido, a posição no áudio (`08:17 de 37:27`),
+  a estimativa do que falta e o botão **Cancelar**. A estimativa vem do ritmo
+  observado na própria execução — segundos de relógio por segundo de áudio —, e
+  não de um número fixo por modelo, que erraria em máquina mais lenta.
 - **Resultado**: uma linha com duração, idioma, segmentos e palavras; o texto
   transcrito editável; e os dois downloads lado a lado.
+
+### Cancelar no meio
+
+O script do Streamlit roda numa thread só e fica preso dentro da transcrição: o
+clique em **Cancelar** só é processado quando o script passa por uma chamada do
+Streamlit. É por isso que a decodificação — que vem antes de transcrever e não
+mostrava nada — passou a chamar o mesmo callback de progresso a cada minuto de
+áudio lido (`FASE_PREPARO`, em `audioTranscricao.py`): sem isso o botão ficaria
+sem resposta durante toda essa fase, que num arquivo longo leva dezenas de
+segundos.
+
+Quando o clique chega, o Streamlit interrompe o script levantando uma exceção
+que herda de `BaseException`, e não de `Exception`. Ela passa direto pelos
+`except` da tela — de propósito — mas não pelo `finally` de
+`_transcrever_upload`, que é onde o arquivo temporário é apagado. O
+`verificar_layout.py` confere as duas coisas: a hierarquia da exceção e o
+temporário removido depois do corte.
+
+**O trabalho parcial é preservado.** Os segmentos são acumulados no
+`session_state` conforme chegam, não numa lista local — que iria embora junto com
+a pilha desmontada pela interrupção. Ao cancelar, o que já foi reconhecido vira
+um resultado normal, editável e exportável, com um aviso dizendo até que ponto do
+áudio o texto vai. Cancelando antes do primeiro segmento, a tela volta ao estado
+de entrada com uma mensagem neutra. Nos dois casos o arquivo enviado continua no
+uploader, para recomeçar sem reenviar.
 
 Cor, fonte e raio das bordas ficam em `.streamlit/config.toml`, com uma variante
 da cor de destaque para o modo claro e outra para o escuro — sem `base` definido,
@@ -306,7 +331,8 @@ comando de regeneração está na seção **Dependências**.
   levantava `ValueError`, e como `_salvar_upload` ficava *fora* do `try`, o erro
   virava um traceback do Streamlit na tela, com caminhos do sistema. A chamada
   passou para dentro do `try` e o erro vira `st.error`.
-- **Varredura de temporários órfãos.** O `finally` cobre erro e rerun, mas não
+- **Varredura de temporários órfãos.** O `finally` cobre erro, rerun e o
+  cancelamento (que é um rerun, veja **Cancelar no meio**), mas não o
   SIGKILL — que já aconteceu nesta aplicação, com o processo morto pelo sistema
   por falta de memória. Cada morte dessas deixava para trás um arquivo do tamanho
   de um vídeo de reunião. Na inicialização, uma vez por processo, os arquivos com

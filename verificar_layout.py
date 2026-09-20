@@ -4,12 +4,28 @@ Usa o AppTest, que roda app.py sem navegador: nenhuma transcricao de verdade
 acontece aqui -- o estado RESULTADO e montado direto no session_state, que e o
 mesmo caminho que a transcricao real usa para sobreviver aos reruns.
 
+O cancelamento e testado com uma transcrever() falsa que levanta a mesma excecao
+que o Streamlit usa para interromper o script quando um clique chega, a
+RerunException. E o unico jeito de exercitar esse caminho sem navegador.
+
 Uso: python verificar_layout.py
 """
 
+import io
+import os
 import sys
+import tempfile
+import wave
 
+import audioTranscricao
+from streamlit.runtime.scriptrunner_utils.exceptions import RerunException
+from streamlit.runtime.scriptrunner_utils.script_requests import RerunData
 from streamlit.testing.v1 import AppTest
+
+# O mesmo prefixo que app.PREFIXO_TEMPORARIO usa nos temporarios. Repetido aqui
+# para nao importar app.py, que e um script do Streamlit: importa-lo executaria
+# a tela inteira fora de um run e encheria a saida de avisos.
+PREFIXO_TEMPORARIO = 'transcricaoAudio_'
 
 TEXTO = (
     "Bom dia a todos. Na aula de hoje vamos fechar o estudo dos principios da "
@@ -18,7 +34,82 @@ TEXTO = (
     "aquilo que a lei autoriza."
 )
 
+DURACAO_FALSA = 2247.0
+
 falhas = []
+
+
+def wav_de_teste():
+    """Um wav minimo, so para o uploader ter um arquivo de verdade para gravar."""
+    buffer = io.BytesIO()
+    with wave.open(buffer, 'wb') as arquivo:
+        arquivo.setnchannels(1)
+        arquivo.setsampwidth(2)
+        arquivo.setframerate(16000)
+        arquivo.writeframes(b'\x00\x00' * 1600)
+    return buffer.getvalue()
+
+
+def temporarios_nossos():
+    """Temporarios desta aplicacao que existem agora."""
+    try:
+        return {nome for nome in os.listdir(tempfile.gettempdir())
+                if nome.startswith(PREFIXO_TEMPORARIO)}
+    except OSError:
+        return set()
+
+
+def segmentos_falsos(quantidade):
+    return [audioTranscricao.Segmento(
+        indice * 30.0, (indice + 1) * 30.0,
+        "Trecho {0} da aula, com pontuacao no fim.".format(indice + 1))
+        for indice in range(quantidade)]
+
+
+def transcrever_falsa(segmentos, cancelar_em=None):
+    """Imita transcrever(): canta progresso, entrega segmentos e pode ser cortada.
+
+    `cancelar_em` diz depois de quantos segmentos o script e interrompido --
+    0 corta ainda na fase de preparo. O corte reproduz o que o Streamlit faz
+    quando o clique em Cancelar chega: o callback do botao marca o pedido e a
+    RerunException interrompe o script na chamada seguinte.
+    """
+    import streamlit as st
+
+    def falsa(caminho, text_output_path=None, idioma="pt-BR", modelo='small',
+              progresso=None, vocabulario=None, max_horas=None, ao_segmento=None):
+        def cortar():
+            if st.session_state.get('execucao_ativa'):
+                st.session_state['cancelado'] = True
+            raise RerunException(RerunData())
+
+        if progresso is not None:
+            progresso(60.0, DURACAO_FALSA, audioTranscricao.FASE_PREPARO)
+        if cancelar_em == 0:
+            cortar()
+
+        for indice, segmento in enumerate(segmentos):
+            if ao_segmento is not None:
+                ao_segmento(segmento)
+            if progresso is not None:
+                progresso(segmento.end, DURACAO_FALSA,
+                          audioTranscricao.FASE_TRANSCRICAO)
+            if cancelar_em is not None and indice + 1 >= cancelar_em:
+                cortar()
+
+        texto = '\n\n'.join(audioTranscricao.agrupar_em_paragrafos(segmentos))
+        return audioTranscricao.Transcricao(texto, list(segmentos), DURACAO_FALSA, 'pt')
+
+    return falsa
+
+
+def app_com_arquivo():
+    """AppTest com um arquivo ja escolhido no uploader, pronto para transcrever."""
+    app = AppTest.from_file('app.py', default_timeout=120)
+    app.run()
+    app.file_uploader[0].set_value(('aula-principios.wav', wav_de_teste(), 'audio/wav'))
+    app.run()
+    return app
 
 
 def conferir(condicao, descricao):
@@ -114,13 +205,83 @@ def main():
     conferir(not any(d.disabled for d in depois.download_button),
              "downloads seguem habilitados (o PDF e gerado do texto editado)")
 
+    print("CANCELAMENTO (mecanismo)")
+    conferir(issubclass(RerunException, BaseException)
+             and not issubclass(RerunException, Exception),
+             "RerunException herda de BaseException, nao de Exception")
+    fonte_app = open('app.py', encoding='utf-8').read()
+    conferir("finally" in fonte_app.split('def _transcrever_upload')[1].split('def ')[0],
+             "_transcrever_upload apaga o temporario num finally")
+    # st.status.update() sem `expanded` recolhe o painel, e recolhido o Streamlit
+    # tira o conteudo do DOM: a barra, os numeros e o botao Cancelar somem da
+    # tela justamente enquanto a transcricao corre. Isso nao aparece no AppTest,
+    # que nao renderiza -- so no navegador --, entao fica checado na fonte.
+    conferir(all('expanded=' in trecho[:240]
+                 for trecho in fonte_app.split('status.update(label')[1:]),
+             "todo status.update diz se o painel continua aberto")
+
+    print("CANCELAMENTO durante a transcricao")
+    original = audioTranscricao.transcrever
+    try:
+        antes = temporarios_nossos()
+        segmentos = segmentos_falsos(4)
+        audioTranscricao.transcrever = transcrever_falsa(segmentos, cancelar_em=2)
+        cortado = app_com_arquivo()
+        cortado.button[0].click().run()
+
+        conferir(not cortado.exception, "roda sem excecao ate a tela voltar")
+        conferir(temporarios_nossos() <= antes,
+                 "temporario removido pelo finally, apesar do corte")
+        conferir(cortado.session_state.get('processando') is False
+                 and cortado.session_state.get('execucao_ativa') is False,
+                 "nenhum estado preso em processando")
+        conferir(cortado.session_state.get('parcial_ate') == segmentos[1].end,
+                 "marca ate onde o texto parcial vai")
+        parcial = cortado.text_area(key='texto_editado').value
+        conferir(all(s.text in parcial for s in segmentos[:2])
+                 and not any(s.text in parcial for s in segmentos[2:]),
+                 "texto parcial tem o que foi reconhecido, e so isso")
+        conferir(any("cancelada" in a.value.lower() for a in cortado.warning),
+                 "aviso de transcricao cancelada, com o ponto de corte")
+        conferir(cortado.file_uploader[0].value is not None,
+                 "arquivo enviado continua no uploader, para recomecar sem reenviar")
+
+        print("NOVA TRANSCRICAO DEPOIS DO CANCELAMENTO")
+        audioTranscricao.transcrever = transcrever_falsa(segmentos)
+        cortado.button[0].click().run()
+        conferir(not cortado.exception, "a transcricao seguinte roda sem excecao")
+        conferir(cortado.session_state.get('parcial_ate') is None
+                 and not cortado.warning,
+                 "o aviso de parcial some quando a transcricao completa")
+        completo = cortado.text_area(key='texto_editado').value
+        conferir(all(s.text in completo for s in segmentos),
+                 "texto completo substitui o parcial")
+        conferir(temporarios_nossos() <= antes, "nenhum temporario sobrou no caminho")
+
+        print("CANCELAMENTO durante o preparo (antes do primeiro segmento)")
+        audioTranscricao.transcrever = transcrever_falsa(segmentos, cancelar_em=0)
+        cedo = app_com_arquivo()
+        cedo.button[0].click().run()
+        conferir(not cedo.exception, "roda sem excecao")
+        conferir(temporarios_nossos() <= antes, "temporario removido tambem no preparo")
+        conferir(any("cancelada" in i.value.lower() for i in cedo.info),
+                 "mensagem neutra de cancelamento")
+        conferir(len(cedo.metric) == 0 and len(cedo.download_button) == 0,
+                 "sem texto parcial, a tela volta ao estado de entrada")
+        conferir([s.value for s in cedo.subheader] == ["Como funciona"],
+                 "faixa Como funciona de volta")
+        conferir(cedo.file_uploader[0].value is not None,
+                 "arquivo enviado preservado")
+    finally:
+        audioTranscricao.transcrever = original
+
     print("-" * 60)
     if falhas:
         print("{0} FALHA(S):".format(len(falhas)))
         for descricao in falhas:
             print("  - {0}".format(descricao))
         return 1
-    print("tres estados conferidos, sem falha")
+    print("tres estados e os dois cancelamentos conferidos, sem falha")
     return 0
 
 
