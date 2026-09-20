@@ -65,6 +65,20 @@ def main():
     conferir(len(vazio.metric) == 0 and len(vazio.download_button) == 0,
              "nada de resultado na tela")
 
+    marcacoes = " ".join(m.value for m in vazio.markdown)
+    legendas = " ".join(c.value for c in vazio.caption)
+    conferir("Processamento local" in marcacoes and "Sem envio para a nuvem" in marcacoes,
+             "diferencial em selo, fora do texto apagado")
+    conferir([s.value for s in vazio.subheader] == ["Como funciona"],
+             "faixa Como funciona presente")
+    conferir(all(passo in marcacoes for passo in
+                 ["1.] Envie o arquivo", "2.] Roda nesta máquina", "3.] Revise e baixe"]),
+             "os tres passos, numerados na cor de destaque")
+    conferir("até 200 MB" in legendas and "mp3" in legendas,
+             "instrucoes do uploader em portugues, com o teto de upload")
+    conferir("github.com/mvaraujo1977/transcricaoAudio" in legendas,
+             "rodape com link para o repositorio")
+
     print("ESTADO RESULTADO (pos-transcricao)")
     pronto = estado_com_resultado()
     conferir(not pronto.exception, "roda sem excecao")
@@ -81,6 +95,10 @@ def main():
              "os dois downloads, lado a lado")
     conferir(not any(d.disabled for d in pronto.download_button),
              "downloads habilitados com texto na tela")
+    conferir([s.value for s in pronto.subheader] == ["Transcrição"],
+             "faixa Como funciona some quando ha resultado")
+    conferir(any("github.com/mvaraujo1977/transcricaoAudio" in c.value
+                 for c in pronto.caption), "rodape continua no estado resultado")
 
     print("ESTADO RESULTADO (apos editar o texto)")
     editado = TEXTO + "\n\nParagrafo acrescentado na revisao, com seis palavras."

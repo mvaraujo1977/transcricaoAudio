@@ -13,8 +13,11 @@ ponto exato do áudio.
 
 A interface tem três estados e mostra um de cada vez:
 
-- **Vazio**: título, uma linha dizendo o que a ferramenta faz, o uploader e as
-  opções avançadas recolhidas.
+- **Vazio**: título, o que a ferramenta faz, os selos do que a diferencia
+  (processamento local, sem envio para a nuvem, modelo Whisper, idiomas), o
+  uploader, as opções avançadas recolhidas e a faixa **Como funciona**, com os
+  três passos do fluxo em uma frase cada. É o que responde "o que isso faz" a
+  quem abre o link sem conhecer o projeto; some assim que houver transcrição.
 - **Processando**: os controles ficam desabilitados e um painel único reúne a
   barra de progresso, o tempo decorrido, a posição no áudio (`08:17 de 37:27`) e
   a estimativa do que falta. A estimativa vem do ritmo observado na própria
@@ -25,12 +28,19 @@ A interface tem três estados e mostra um de cada vez:
 
 Cor, fonte e raio das bordas ficam em `.streamlit/config.toml`, com uma variante
 da cor de destaque para o modo claro e outra para o escuro — sem `base` definido,
-a tela segue a preferência do navegador. O menu e o botão Deploy saem pelo
-`toolbarMode = "minimal"`, e o empilhamento das colunas em tela estreita é o
-comportamento padrão do `st.columns`, abaixo de 640 px. Sobrou um único bloco de
-CSS em `app.py`, para o espaçamento do bloco principal, e ele usa seletor
-`[data-testid=...]`: as classes que o Streamlit gera mudam de nome a cada
-atualização e não servem de apoio.
+a tela segue a preferência do navegador. A mesma cor vale para os links
+(`linkColor`), senão o azul padrão do Streamlit entraria como uma segunda cor de
+destaque. Os selos e os números dos passos usam `:primary-badge[...]` e
+`:primary[...]`, que puxam a cor do tema em vez de fixá-la no código. O menu e o
+botão Deploy saem pelo `toolbarMode = "minimal"`, e o empilhamento das colunas em
+tela estreita é o comportamento padrão do `st.columns`, abaixo de 640 px.
+
+Sobraram dois blocos de CSS em `app.py`, ambos com seletor `[data-testid=...]`,
+porque as classes que o Streamlit gera mudam de nome a cada atualização: o
+espaçamento do bloco principal e as instruções do uploader, que o Streamlit
+escreve em inglês ("256MB per file • MP3, WAV, …") sem oferecer tradução nem
+parâmetro para trocá-las — a linha em português logo abaixo do uploader diz a
+mesma coisa, com o teto lido de `server.maxUploadSize`.
 
 `verificar_layout.py` carrega a tela nos três estados com o AppTest, sem
 navegador e sem transcrever nada:

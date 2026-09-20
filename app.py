@@ -60,6 +60,12 @@ ESTILO = """
    espaçamento de bloco não é exposto pelo tema. Até 640 px o Streamlit aplica
    um padding maior, que prevalece -- é o que a tela estreita pede. */
 [data-testid="stMainBlockContainer"] { padding-top: 3rem; padding-bottom: 4rem; }
+
+/* Instruções do uploader ("256MB per file - MP3, WAV, ..."). O Streamlit não
+   traduz esse texto e não expõe parâmetro para trocá-lo: st.file_uploader só
+   deixa escrever o label e o help. A linha em português logo abaixo do uploader
+   diz a mesma coisa, com o limite lido de server.maxUploadSize. */
+[data-testid="stFileUploaderDropzoneInstructions"] { display: none; }
 </style>
 """
 
@@ -207,6 +213,13 @@ def _painel_de_entrada(processando):
     """
     upload = st.file_uploader("Arquivo de áudio ou vídeo", type=FORMATOS_ACEITOS,
                               key='upload', disabled=processando)
+    # Substitui as instruções em inglês do próprio uploader, escondidas no ESTILO.
+    # O teto vem de server.maxUploadSize, que muda entre o container (256 MB) e a
+    # execução local (200 MB), então é lido em vez de escrito à mão.
+    st.caption("Arraste o arquivo ou clique em Upload — até {0} MB. "
+               "Formatos aceitos: {1}.".format(
+                   st.get_option('server.maxUploadSize'),
+                   ', '.join(FORMATOS_ACEITOS)))
 
     with st.expander("Opções avançadas", expanded=False):
         rotulo_idioma = st.selectbox("Idioma do áudio", list(IDIOMAS), index=0,
@@ -241,6 +254,34 @@ def _painel_de_entrada(processando):
     clicou = st.button("Transcrever", type="primary", width="stretch",
                        disabled=processando or upload is None)
     return upload, IDIOMAS[rotulo_idioma], modelo, vocabulario, clicou
+
+
+def _painel_de_apresentacao():
+    """Faixa "Como funciona", só no estado vazio.
+
+    Quem abre o link sem conhecer o projeto precisa entender o fluxo antes de
+    enviar qualquer coisa. São três passos, uma frase cada, na mesma ordem em
+    que a tela acontece -- e some assim que houver uma transcrição em andamento
+    ou pronta, que é quando a orientação vira ruído.
+    """
+    st.divider()
+    st.subheader("Como funciona")
+
+    # Títulos curtos de propósito: em três colunas de ~224 px, um título de duas
+    # linhas empurra a frase dele para baixo e desalinha a faixa inteira.
+    passo_a, passo_b, passo_c = st.columns(3)
+    with passo_a:
+        st.markdown("**:primary[1.] Envie o arquivo**")
+        st.caption("Áudio ou vídeo de aula, reunião ou entrevista. De um vídeo, "
+                   "só a trilha de áudio é lida.")
+    with passo_b:
+        st.markdown("**:primary[2.] Roda nesta máquina**")
+        st.caption("O modelo Whisper processa o áudio localmente, sem conta, sem "
+                   "chave de API e sem requisição de saída.")
+    with passo_c:
+        st.markdown("**:primary[3.] Revise e baixe**")
+        st.caption("O texto sai em parágrafos, editável na tela, e exporta em "
+                   ".txt ou em .pdf com marcação de tempo.")
 
 
 def _painel_de_resultado():
@@ -306,9 +347,15 @@ st.markdown(ESTILO, unsafe_allow_html=True)
 processando = st.session_state.get('processando', False)
 
 st.title("Transcrição de áudio")
-st.caption("Transcreve arquivos de áudio e vídeo em texto editável, com exportação "
-           "em .txt e .pdf. O reconhecimento roda nesta máquina: nenhum arquivo é "
-           "enviado para fora.")
+# A descrição e o que a diferencia ficam em texto normal, não em legenda: rodar
+# local é a informação mais importante da página e estava no tom mais apagado
+# dela. Os selos usam a cor de destaque do tema, não uma cor escrita no código.
+st.markdown("Transcreve arquivos de áudio e vídeo em texto editável, para revisar "
+            "na tela e exportar em .txt ou .pdf.")
+st.markdown(":primary-badge[Processamento local] "
+            ":primary-badge[Sem envio para a nuvem] "
+            ":gray-badge[Modelo Whisper] "
+            ":gray-badge[Português e mais 5 idiomas]")
 
 upload, idioma, modelo, vocabulario, clicou = _painel_de_entrada(processando)
 
@@ -352,3 +399,11 @@ if st.session_state.get('erro'):
 if 'texto_editado' in st.session_state:
     st.divider()
     _painel_de_resultado()
+else:
+    # O estado PROCESSANDO não chega aqui: o bloco acima termina em st.rerun().
+    _painel_de_apresentacao()
+
+st.divider()
+st.caption("Projeto pessoal — código em "
+           "[github.com/mvaraujo1977/transcricaoAudio]"
+           "(https://github.com/mvaraujo1977/transcricaoAudio).")

@@ -19,10 +19,14 @@ showWidgetBorder = true
 [theme.light]
 # Teal escuro o bastante para o texto branco do botão primário ficar legível.
 primaryColor = "#0F766E"
+# Link na mesma cor do destaque. Sem isso o Streamlit usa o azul padrão, que
+# seria uma segunda cor de destaque na tela -- o link do rodapé é o único link.
+linkColor = "#0F766E"
 
 [theme.dark]
 # O mesmo teal, clareado: no fundo escuro a versão do modo claro fica apagada.
 primaryColor = "#2DD4BF"
+linkColor = "#2DD4BF"
 
 [client]
 # Esvazia o menu (Rerun, Clear cache, Deploy): sem nenhuma entrada sobrando, o
