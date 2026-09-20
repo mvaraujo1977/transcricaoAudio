@@ -142,6 +142,8 @@ def metrica(app, rotulo):
 
 
 def main():
+    antes_de_tudo = temporarios_nossos()
+
     print("ESTADO VAZIO (nada enviado)")
     vazio = AppTest.from_file('app.py', default_timeout=60)
     vazio.run()
@@ -151,8 +153,12 @@ def main():
     conferir(len(vazio.file_uploader) == 1, "uploader presente")
     conferir([e.label for e in vazio.expander] == ["Opções avançadas"],
              "opcoes avancadas recolhidas num expander")
-    conferir(len(vazio.button) == 1 and vazio.button[0].disabled,
-             "botao Transcrever desabilitado sem arquivo")
+    rotulos = [b.label for b in vazio.button]
+    conferir(rotulos == ['Transcrever', 'Testar com exemplo'],
+             "os dois botoes do estado vazio, nesta ordem")
+    conferir(vazio.button[0].disabled, "Transcrever desabilitado sem arquivo")
+    conferir(not vazio.button[1].disabled,
+             "Testar com exemplo habilitado: nao depende de upload")
     conferir(len(vazio.metric) == 0 and len(vazio.download_button) == 0,
              "nada de resultado na tela")
 
@@ -188,6 +194,8 @@ def main():
              "downloads habilitados com texto na tela")
     conferir([s.value for s in pronto.subheader] == ["Transcrição"],
              "faixa Como funciona some quando ha resultado")
+    conferir([b.label for b in pronto.button] == ['Transcrever'],
+             "botao de exemplo some quando ja ha transcricao")
     conferir(any("github.com/mvaraujo1977/transcricaoAudio" in c.value
                  for c in pronto.caption), "rodape continua no estado resultado")
 
@@ -204,6 +212,32 @@ def main():
              "metricas do audio nao mudam com a edicao")
     conferir(not any(d.disabled for d in depois.download_button),
              "downloads seguem habilitados (o PDF e gerado do texto editado)")
+
+    print("BOTAO TESTAR COM EXEMPLO")
+    conferir(os.path.isfile(os.path.join('exemplos', 'exemplo-o-alienista.mp3')),
+             "o audio de exemplo esta no repositorio")
+    original_exemplo = audioTranscricao.transcrever
+    try:
+        segmentos = segmentos_falsos(2)
+        recebidos = []
+
+        def espiar(caminho, *args, **kwargs):
+            recebidos.append(caminho)
+            return transcrever_falsa(segmentos)(caminho, *args, **kwargs)
+
+        audioTranscricao.transcrever = espiar
+        com_exemplo = AppTest.from_file('app.py', default_timeout=120)
+        com_exemplo.run()
+        com_exemplo.button[1].click().run()
+        conferir(not com_exemplo.exception, "o exemplo roda sem excecao")
+        conferir(bool(recebidos) and recebidos[0].endswith('exemplo-o-alienista.mp3'),
+                 "transcreve o arquivo do repositorio, sem upload")
+        conferir(com_exemplo.session_state.get('nome_origem') == 'exemplo-o-alienista.mp3',
+                 "o nome do exemplo vai para os downloads")
+        conferir(temporarios_nossos() <= antes_de_tudo,
+                 "o exemplo nao deixa temporario: nao passa por upload")
+    finally:
+        audioTranscricao.transcrever = original_exemplo
 
     print("CANCELAMENTO (mecanismo)")
     conferir(issubclass(RerunException, BaseException)

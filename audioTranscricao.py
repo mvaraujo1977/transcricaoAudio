@@ -44,6 +44,12 @@ LIMITE_TOKENS_VOCABULARIO = 224
 # TRANSCRICAO_MAX_HORAS numa maquina apertada.
 LIMITE_HORAS_PADRAO = 4.0
 VARIAVEL_LIMITE = 'TRANSCRICAO_MAX_HORAS'
+VARIAVEL_LIMITE_MINUTOS = 'TRANSCRICAO_MAX_MINUTOS'
+
+# O modelo pré-selecionado também é configurável: a mesma imagem serve a máquina
+# pessoal e uma demo pública, que roda em CPU compartilhada e pede um modelo mais
+# leve. Veja modelo_padrao().
+VARIAVEL_MODELO = 'TRANSCRICAO_MODELO'
 
 # O Whisper trabalha internamente a 16 kHz mono; decodificar direto nesse
 # formato evita uma reamostragem depois.
@@ -123,20 +129,46 @@ def _duracao_legivel(segundos):
     return "{0:.1f} h".format(segundos / 3600.0)
 
 
-def limite_horas():
-    """Teto de duração em horas, configurável por TRANSCRICAO_MAX_HORAS."""
-    bruto = os.environ.get(VARIAVEL_LIMITE)
-    if not bruto or not bruto.strip():
-        return LIMITE_HORAS_PADRAO
+def _numero_positivo(bruto, variavel, unidade):
+    """Converte o valor de uma variável de ambiente, exigindo número > 0."""
     try:
         valor = float(bruto)
     except ValueError:
-        raise ValueError("{0} precisa ser um número em horas; veio {1!r}".format(
-            VARIAVEL_LIMITE, bruto))
+        raise ValueError("{0} precisa ser um número em {1}; veio {2!r}".format(
+            variavel, unidade, bruto))
     if valor <= 0:
         raise ValueError("{0} precisa ser maior que zero; veio {1!r}".format(
-            VARIAVEL_LIMITE, bruto))
+            variavel, bruto))
     return valor
+
+
+def limite_horas():
+    """Teto de duração em horas.
+
+    Configurável por TRANSCRICAO_MAX_HORAS ou, quando o teto é curto demais para
+    ser escrito em horas -- uma demo pública com 5 min, por exemplo --, por
+    TRANSCRICAO_MAX_MINUTOS, que tem precedência.
+    """
+    minutos = os.environ.get(VARIAVEL_LIMITE_MINUTOS)
+    if minutos and minutos.strip():
+        return _numero_positivo(minutos, VARIAVEL_LIMITE_MINUTOS, 'minutos') / 60.0
+
+    horas = os.environ.get(VARIAVEL_LIMITE)
+    if not horas or not horas.strip():
+        return LIMITE_HORAS_PADRAO
+    return _numero_positivo(horas, VARIAVEL_LIMITE, 'horas')
+
+
+def modelo_padrao():
+    """Modelo pré-selecionado na tela e na CLI, configurável por TRANSCRICAO_MODELO.
+
+    Existe para a mesma imagem servir a máquina pessoal, onde o `small` compensa,
+    e uma demo em CPU compartilhada, onde ele deixa a espera longa demais. Valor
+    fora de MODELOS é ignorado: qual modelo está valendo fica visível na tela, e
+    derrubar a aplicação por causa de uma variável mal escrita seria pior.
+    """
+    escolhido = (os.environ.get(VARIAVEL_MODELO) or '').strip()
+    return escolhido if escolhido in MODELOS else MODELO_PADRAO
 
 
 def sondar_duracao(caminho):
@@ -375,8 +407,9 @@ def main(argv=None):
                         help="arquivo .txt de saída")
     parser.add_argument('-l', '--idioma', default='pt-BR',
                         help="idioma do áudio (ex.: en-US); vazio deixa o Whisper detectar")
-    parser.add_argument('-m', '--modelo', default=MODELO_PADRAO, choices=MODELOS,
-                        help="modelo Whisper: maiores são mais precisos e mais lentos")
+    parser.add_argument('-m', '--modelo', default=modelo_padrao(), choices=MODELOS,
+                        help="modelo Whisper: maiores são mais precisos e mais lentos "
+                             "(padrão: {0}, ou {1})".format(modelo_padrao(), VARIAVEL_MODELO))
     parser.add_argument('-v', '--vocabulario', default=None,
                         help="termos e siglas do domínio, para o modelo acertar o jargão")
     parser.add_argument('--max-horas', type=float, default=None, metavar='H',

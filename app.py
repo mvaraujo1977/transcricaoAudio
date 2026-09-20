@@ -9,9 +9,9 @@ import time
 import streamlit as st
 
 from audioTranscricao import (FASE_PREPARO, FASE_TRANSCRICAO,
-                              LIMITE_TOKENS_VOCABULARIO, MODELO_PADRAO, MODELOS,
+                              LIMITE_TOKENS_VOCABULARIO, MODELOS,
                               agrupar_em_paragrafos, inicio_dos_paragrafos,
-                              preparar_vocabulario, transcrever)
+                              modelo_padrao, preparar_vocabulario, transcrever)
 from gerar_pdf import transcricao_para_pdf
 
 FORMATOS_ACEITOS = ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aiff', 'mp4', 'mkv', 'avi', 'mov']
@@ -36,6 +36,13 @@ PLACEHOLDER_VOCABULARIO = (
     "Princípios da administração pública: LIMPE, legalidade, impessoalidade, "
     "moralidade, publicidade, eficiência. Gabarito, questão, banca."
 )
+
+# Áudio de exemplo que acompanha o repositório: 24 s de "O Alienista", de
+# Machado de Assis, em domínio público (veja exemplos/CREDITOS.md). É o que
+# permite experimentar a ferramenta sem ter um arquivo à mão.
+CAMINHO_EXEMPLO = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               'exemplos', 'exemplo-o-alienista.mp3')
+NOME_EXEMPLO = 'exemplo-o-alienista.mp3'
 
 # Tamanho aproximado do download de cada modelo, para avisar antes da espera.
 TAMANHO_MODELO = {
@@ -253,7 +260,7 @@ def _executar_transcricao(caminho, idioma, modelo, vocabulario=None):
     return resultado
 
 
-def _transcrever_upload(upload, idioma, modelo, vocabulario=None):
+def _transcrever_upload(upload, idioma, modelo, vocabulario=None, caminho_pronto=None):
     """Grava o upload, transcreve e apaga o temporário aconteça o que acontecer.
 
     O `finally` cobre o erro, o rerun e também o cancelamento: o Streamlit
@@ -262,7 +269,13 @@ def _transcrever_upload(upload, idioma, modelo, vocabulario=None):
 
     _salvar_upload fica DENTRO do try: um nome de arquivo hostil vira st.error
     em vez de um traceback do Streamlit expondo caminhos do sistema.
+
+    `caminho_pronto` é o áudio de exemplo que vem no repositório: já está no
+    disco, não passou por upload e não deve ser apagado no fim.
     """
+    if caminho_pronto:
+        return _executar_transcricao(caminho_pronto, idioma, modelo, vocabulario)
+
     caminho = None
     try:
         caminho = _salvar_upload(upload)
@@ -293,7 +306,7 @@ def _pdf_em_bytes(texto, nome_origem, idioma):
     return buffer.getvalue()
 
 
-def _painel_de_entrada(processando):
+def _painel_de_entrada(processando, mostrar_exemplo=False):
     """Desenha o uploader e as opções; devolve o que foi escolhido.
 
     Os widgets continuam na tela durante o processamento, desabilitados: fazê-los
@@ -313,7 +326,7 @@ def _painel_de_entrada(processando):
     with st.expander("Opções avançadas", expanded=False):
         rotulo_idioma = st.selectbox("Idioma do áudio", list(IDIOMAS), index=0,
                                      key='rotulo_idioma', disabled=processando)
-        modelo = st.selectbox("Modelo", MODELOS, index=MODELOS.index(MODELO_PADRAO),
+        modelo = st.selectbox("Modelo", MODELOS, index=MODELOS.index(modelo_padrao()),
                               key='modelo', disabled=processando)
         st.caption("Modelos maiores são mais precisos e mais lentos. `small` costuma "
                    "equilibrar bem; `medium` e `large-v3` ganham em jargão e nomes "
@@ -340,9 +353,25 @@ def _painel_de_entrada(processando):
                            "Whisper. O excedente será ignorado -- deixe os termos "
                            "mais importantes no começo.".format(LIMITE_TOKENS_VOCABULARIO))
 
-    clicou = st.button("Transcrever", type="primary", width="stretch",
-                       disabled=processando or upload is None)
-    return upload, IDIOMAS[rotulo_idioma], modelo, vocabulario, clicou
+    if mostrar_exemplo:
+        # Quem abre a demo pública raramente tem um arquivo de áudio à mão. O
+        # exemplo vem no repositório e entra pelo mesmo caminho da transcrição,
+        # sem upload -- é o que separa ver a ferramenta funcionando de fechar a
+        # aba. Fica ao lado do botão principal, e some assim que há resultado.
+        coluna_transcrever, coluna_exemplo = st.columns([2, 1])
+        clicou = coluna_transcrever.button(
+            "Transcrever", type="primary", width="stretch",
+            disabled=processando or upload is None)
+        exemplo = coluna_exemplo.button(
+            "Testar com exemplo", width="stretch", disabled=processando,
+            help="Transcreve um trecho de 24 s de 'O Alienista', de Machado de "
+                 "Assis, em domínio público. Não envia arquivo nenhum.")
+    else:
+        clicou = st.button("Transcrever", type="primary", width="stretch",
+                           disabled=processando or upload is None)
+        exemplo = False
+
+    return upload, IDIOMAS[rotulo_idioma], modelo, vocabulario, clicou, exemplo
 
 
 def _painel_de_apresentacao():
@@ -463,12 +492,14 @@ st.markdown(":gray-badge[Processamento local] "
             ":gray-badge[Modelo Whisper] "
             ":gray-badge[Português e mais 5 idiomas]")
 
-upload, idioma, modelo, vocabulario, clicou = _painel_de_entrada(processando)
+upload, idioma, modelo, vocabulario, clicou, exemplo = _painel_de_entrada(
+    processando, mostrar_exemplo='texto_editado' not in st.session_state)
 
-if clicou:
+if clicou or exemplo:
     # O clique só liga o estado e volta: a transcrição roda no rerun seguinte,
     # que já desenha os controles desabilitados antes de começar o trabalho.
     st.session_state['processando'] = True
+    st.session_state['usar_exemplo'] = bool(exemplo)
     st.session_state.pop('erro', None)
     st.session_state.pop('aviso', None)
     st.rerun()
@@ -481,8 +512,11 @@ if processando:
     # script, esta marca fica de pé e é o que diz ao callback do botão que havia
     # mesmo uma execução para cancelar.
     st.session_state['execucao_ativa'] = True
+    do_exemplo = st.session_state.get('usar_exemplo', False)
     try:
-        resultado = _transcrever_upload(upload, idioma, modelo, vocabulario)
+        resultado = _transcrever_upload(
+            upload, idioma, modelo, vocabulario,
+            caminho_pronto=CAMINHO_EXEMPLO if do_exemplo else None)
     except (OSError, ValueError, RuntimeError) as erro:
         # O erro viaja pelo session_state porque o rerun logo abaixo apagaria
         # qualquer st.error escrito aqui.
@@ -494,7 +528,8 @@ if processando:
         st.session_state['segmentos'] = resultado.segmentos
         st.session_state['duracao'] = resultado.duracao
         st.session_state['idioma_detectado'] = resultado.idioma_detectado
-        st.session_state['nome_origem'] = upload.name
+        st.session_state['nome_origem'] = (
+            NOME_EXEMPLO if do_exemplo else upload.name)
         st.session_state['idioma_escolhido'] = idioma or resultado.idioma_detectado
         st.session_state.pop('parcial_ate', None)
         st.session_state.pop('segmentos_parciais', None)
@@ -512,7 +547,9 @@ if st.session_state.pop('cancelado', False):
         st.session_state['segmentos'] = parciais
         st.session_state['duracao'] = st.session_state.get('duracao_audio')
         st.session_state['idioma_detectado'] = None
-        st.session_state['nome_origem'] = upload.name if upload is not None else None
+        st.session_state['nome_origem'] = (
+            NOME_EXEMPLO if st.session_state.get('usar_exemplo')
+            else (upload.name if upload is not None else None))
         st.session_state['idioma_escolhido'] = idioma
         st.session_state['parcial_ate'] = parciais[-1].end
     else:

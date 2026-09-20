@@ -28,6 +28,9 @@ revisão na tela e exportação em `.txt` e `.pdf`.
 - **Cancela no meio** e mantém o que já foi transcrito, com aviso de até que
   ponto do áudio o texto vai.
 - **Tem linha de comando** além da interface, com os mesmos parâmetros.
+- **Traz um áudio de exemplo**: o botão *Testar com exemplo* transcreve 24 s de
+  "O Alienista", de Machado de Assis, em domínio público, sem precisar de
+  arquivo à mão ([créditos](exemplos/CREDITOS.md)).
 
 O fluxo completo, do envio ao download, com um áudio de 40 s — quadros do
 processo, não em tempo real:
@@ -88,6 +91,26 @@ Hugging Face (`~/.cache/huggingface`) — são centenas de MB.
 `requirements.txt` declara as dependências diretas com pisos de versão. A imagem
 instala `requirements.lock.txt`, com as 51 versões exatas já testadas; o porquê e
 o comando de regeneração estão em [docs/SEGURANCA.md](docs/SEGURANCA.md).
+
+### Configuração por variável de ambiente
+
+A mesma imagem serve uma instalação pessoal e uma demo pública: o que muda entre
+as duas sai do ambiente, sem tocar no código.
+
+| Variável | Para quê | Padrão |
+|---|---|---|
+| `TRANSCRICAO_MODELO` | modelo pré-selecionado na tela e na CLI | `small` |
+| `TRANSCRICAO_MAX_HORAS` | teto de duração do áudio, em horas | `4` |
+| `TRANSCRICAO_MAX_MINUTOS` | o mesmo teto em minutos; tem precedência sobre o anterior | — |
+| `TRANSCRICAO_MAX_UPLOAD_MB` | teto de tamanho do arquivo enviado | `256` |
+
+No `docker-compose.yml`, por exemplo:
+
+```yaml
+    environment:
+      - TRANSCRICAO_MODELO=medium
+      - TRANSCRICAO_MAX_HORAS=8
+```
 
 ## Como usar
 
