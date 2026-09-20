@@ -198,7 +198,12 @@ limite — e quem barra é o segundo portão: `decodificar_audio` soma as amostr
 quadro a quadro e levanta `DuracaoExcedida` no instante em que o total passa de
 1 h. Medido: pico de **216 MB** contra os 1.209 MB do decode completo, porque a
 decodificação é interrompida na marca do teto e o array float32 nunca chega a ser
-alocado.
+alocado. A contagem compara com o teto configurado, não com a duração declarada
+nem com o conteúdo: os 216 MB são do teto de 1 h usado na medição — 57,6 M
+amostras, ou 115 MB de s16 nos blocos acumulados, sobre a linha de base de ~41 MB
+—, e não dos 4 h do padrão, cujos 922 MB da tabela abaixo são o float32 que aqui
+nunca é alocado. Com o teto no padrão de 4 h, este mesmo arquivo de 2 h não seria
+barrado: seria transcrito.
 
 **O cenário 2 é a razão de o segundo portão existir.** O cabeçalho é um dado sob
 controle de quem envia o arquivo: falsificá-lo custa os poucos bytes editados
