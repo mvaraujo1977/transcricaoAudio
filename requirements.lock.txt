@@ -1,6 +1,6 @@
 # Gerado DENTRO da imagem alvo (python:3.12-slim), nao no venv de
 # desenvolvimento: o lock precisa casar com o interpretador que vai roda-lo.
-# Regenerar com o comando documentado no README.
+# Regenerar com o comando documentado em docs/SEGURANCA.md.
 altair==6.3.0
 anyio==4.15.1
 attrs==26.1.0

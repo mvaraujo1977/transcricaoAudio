@@ -8,6 +8,7 @@ __pycache__/
 transcricao_audio.txt
 audio1.wav
 README.md
+docs/
 Dockerfile
 .dockerignore
 dados/

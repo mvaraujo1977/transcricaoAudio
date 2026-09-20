@@ -1,467 +1,201 @@
 # Transcrição de Áudio
 
-Transcreve arquivos de áudio e vídeo para texto usando o [faster-whisper](https://github.com/SYSTRAN/faster-whisper),
-que roda **localmente** — nada é enviado para serviços externos. Tem interface web
-(Streamlit) e linha de comando, e o texto pode ser revisado na tela antes de ser
-exportado em `.txt` ou `.pdf`.
+Transcreve arquivos de áudio e vídeo para texto **na própria máquina**, com
+revisão na tela e exportação em `.txt` e `.pdf`.
 
-A saída vem com pontuação, capitalização e parágrafos, além de timestamps por
-segmento, que permitem marcar cada parágrafo do PDF com `[MM:SS]` para voltar ao
-ponto exato do áudio.
+![Tela da aplicação com uma transcrição pronta: métricas de duração, idioma, segmentos e palavras, o texto editável e os dois botões de download](docs/tela.png)
 
-## A tela
+## O que faz
 
-A interface tem três estados e mostra um de cada vez:
+- **Aceita áudio e vídeo** em 10 formatos: `mp3`, `wav`, `m4a`, `ogg`, `flac`,
+  `aiff`, `mp4`, `mkv`, `avi`, `mov`. De um vídeo, só a trilha de áudio é lida.
+- **Transcreve localmente**, com o Whisper via `faster-whisper`. Nenhum arquivo
+  sai da máquina: não há conta, chave de API nem requisição de saída, e o modelo
+  vem embutido na imagem Docker.
+- **Transcreve, não traduz.** O texto sai no idioma falado no áudio. A lista de
+  idiomas serve para dizer ao modelo o que esperar, não para converter de um
+  idioma a outro: são 7 opções cobrindo 6 idiomas — português (Brasil e
+  Portugal), inglês, espanhol, francês, italiano e alemão —, mais **detectar
+  automaticamente**, que deixa o Whisper identificar o idioma sozinho.
+- **Devolve texto pontuado**, com capitalização e quebrado em parágrafos de
+  ~500 caracteres fechados em pontuação forte — não um bloco corrido.
+- **Permite revisar na tela** antes de exportar: o texto vem num campo editável,
+  para corrigir nomes próprios e siglas que o reconhecimento errou.
+- **Exporta `.txt` e `.pdf`**, com marcação de tempo `[MM:SS]` por parágrafo
+  opcional no PDF, para voltar ao ponto exato do áudio.
+- **Aceita vocabulário do domínio** (siglas e jargão) para semear o
+  reconhecimento e corrigir termos que o modelo erraria por não esperá-los.
+- **Cancela no meio** e mantém o que já foi transcrito, com aviso de até que
+  ponto do áudio o texto vai.
+- **Tem linha de comando** além da interface, com os mesmos parâmetros.
 
-- **Vazio**: título, o que a ferramenta faz, os selos do que a diferencia
-  (processamento local, sem envio para a nuvem, modelo Whisper, idiomas), o
-  uploader, as opções avançadas recolhidas e a faixa **Como funciona**, com os
-  três passos do fluxo em uma frase cada. É o que responde "o que isso faz" a
-  quem abre o link sem conhecer o projeto; some assim que houver transcrição.
-- **Processando**: os controles ficam desabilitados e um painel único reúne a
-  barra de progresso, o tempo decorrido, a posição no áudio (`08:17 de 37:27`),
-  a estimativa do que falta e o botão **Cancelar**. A estimativa vem do ritmo
-  observado na própria execução — segundos de relógio por segundo de áudio —, e
-  não de um número fixo por modelo, que erraria em máquina mais lenta.
-- **Resultado**: uma linha com duração, idioma, segmentos e palavras; o texto
-  transcrito editável; e os dois downloads lado a lado.
+O fluxo completo, do envio ao download, com um áudio de 40 s — quadros do
+processo, não em tempo real:
 
-### Cancelar no meio
+![Envio do arquivo, painel de progresso com tempo decorrido e estimativa, e o resultado com o texto editável](docs/fluxo.gif)
 
-O script do Streamlit roda numa thread só e fica preso dentro da transcrição: o
-clique em **Cancelar** só é processado quando o script passa por uma chamada do
-Streamlit. É por isso que a decodificação — que vem antes de transcrever e não
-mostrava nada — passou a chamar o mesmo callback de progresso a cada minuto de
-áudio lido (`FASE_PREPARO`, em `audioTranscricao.py`): sem isso o botão ficaria
-sem resposta durante toda essa fase, que num arquivo longo leva dezenas de
-segundos.
+## Tecnologias
 
-Quando o clique chega, o Streamlit interrompe o script levantando uma exceção
-que herda de `BaseException`, e não de `Exception`. Ela passa direto pelos
-`except` da tela — de propósito — mas não pelo `finally` de
-`_transcrever_upload`, que é onde o arquivo temporário é apagado. O
-`verificar_layout.py` confere as duas coisas: a hierarquia da exceção e o
-temporário removido depois do corte.
+| Ferramenta | Papel no projeto |
+|---|---|
+| **Python 3.12** | linguagem do motor, da interface e da CLI (a imagem roda 3.12; o venv local aceita 3.12+) |
+| **faster-whisper** | motor de reconhecimento de fala: recebe o áudio decodificado e devolve segmentos com texto, tempo e idioma detectado |
+| **CTranslate2** | runtime que executa o modelo Whisper em CPU, com quantização `int8` — é o que torna viável transcrever sem GPU |
+| **PyAV** | decodificação de mídia (liga nos codecs do FFmpeg): lê mp3, mp4, mkv e afins sem depender de um `ffmpeg` instalado no sistema |
+| **NumPy** | o áudio decodificado vira um array float32 16 kHz mono, que é o formato que o modelo consome |
+| **Streamlit** | interface web: uploader, painel de progresso, texto editável e downloads |
+| **ReportLab** | geração do PDF a partir do texto revisado, com cabeçalho e paginação |
+| **Docker + Docker Compose** | empacotamento com o modelo já dentro da imagem, porta publicada só no loopback e um comando para subir |
 
-**O trabalho parcial é preservado.** Os segmentos são acumulados no
-`session_state` conforme chegam, não numa lista local — que iria embora junto com
-a pilha desmontada pela interrupção. Ao cancelar, o que já foi reconhecido vira
-um resultado normal, editável e exportável, com um aviso dizendo até que ponto do
-áudio o texto vai. Cancelando antes do primeiro segmento, a tela volta ao estado
-de entrada com uma mensagem neutra. Nos dois casos o arquivo enviado continua no
-uploader, para recomeçar sem reenviar.
+## Como rodar
 
-### Paleta
-
-Tudo o que é cor fica em `.streamlit/config.toml`. Sem `base` definido, a tela
-segue a preferência do navegador, e **cada modo é desenhado à mão**: o escuro não
-é conversão do claro, porque pastel claro sobre fundo escuro ofusca. Lá o
-equivalente de pastel é superfície um degrau acima do fundo, e o acento sobe em
-vez de descer.
-
-Um matiz só, o verde-azulado, em duas intensidades:
-
-| Papel | Claro | Escuro |
-|---|---|---|
-| Fundo da página | `#FAF8F4` creme quente | `#101715` quase preto esverdeado |
-| Superfície (campos, uploader, área de texto) | `#E7EFEA` sálvia pastel | `#1B2523` |
-| Texto | `#1C2723` | `#E6EDEA` |
-| Acento (botão primário, barra, foco) | `#0F766E` | `#178273` |
-| Link | `#0F766E` | `#7FD8C6` |
-| Selo: fundo / texto | `#DCE8E1` / `#2E443D` | `#26332F` / `#BFD6CD` |
-| Borda de widget | `#77877F` | `#5B7871` |
-
-**O pastel fica na superfície, nunca no texto.** O acento não pode ser pastel
-porque o Streamlit escreve em **branco** sobre ele no botão primário, nos dois
-modos — por isso o tom do modo escuro é mais aberto que o do claro (luminância
-0,17 contra 0,15), mas não muito mais: acima disso o branco do botão reprova.
-
-Pelo mesmo motivo os selos e os números dos passos usam `:gray-badge[...]` e
-`:gray[...]`, com `grayColor` definido por modo, e não `primary`: como o texto do
-selo é pintado com a própria cor de destaque, um acento profundo o bastante para
-o botão cai para **3,16:1** dentro do selo no modo escuro.
-
-#### Contraste medido
-
-Medido no Chromium, contra o container, lendo as cores que o navegador de fato
-pinta (inclusive a composição alfa dos selos e a opacidade que o Streamlit aplica
-na legenda):
-
-| Par | Mínimo | Claro | Escuro |
-|---|---|---|---|
-| Texto do corpo sobre o fundo | 4,5:1 | 14,52:1 | 15,29:1 |
-| Texto do corpo sobre a superfície | 4,5:1 | 13,15:1 | 13,23:1 |
-| Legenda (`st.caption`) sobre o fundo | 4,5:1 | 5,92:1 | 8,32:1 |
-| Texto do selo sobre o fundo do selo | 4,5:1 | 8,29:1 | 8,59:1 |
-| Branco sobre o botão primário | 4,5:1 | 5,47:1 | 4,69:1 |
-| Borda de widget contra o fundo | 3:1 | 3,56:1 | 3,78:1 |
-| Borda de widget contra a superfície | 3:1 | 3,23:1 | 3,27:1 |
-
-Dois pares reprovavam e foram corrigidos: a borda padrão do Streamlit ficava em
-**1,45:1** contra o fundo (daí `borderColor` explícito), e a legenda, que o
-Streamlit apaga com `opacity: 0.6`, ficava em **4,08:1** no modo claro — a
-opacidade subiu para 0,72 por CSS, o que resolve nos dois modos sem fixar cor.
-
-O menu e o botão Deploy saem pelo `toolbarMode = "minimal"`, e o empilhamento das
-colunas em tela estreita é o comportamento padrão do `st.columns`, abaixo de
-640 px.
-
-Sobraram três blocos de CSS em `app.py`, todos com seletor `[data-testid=...]`,
-porque as classes que o Streamlit gera mudam de nome a cada atualização: o
-espaçamento do bloco principal, a opacidade da legenda e as instruções do
-uploader, que o Streamlit escreve em inglês ("256MB per file • MP3, WAV, …") sem
-oferecer tradução nem parâmetro para trocá-las — a linha em português logo abaixo
-do uploader diz a mesma coisa, com o teto lido de `server.maxUploadSize`.
-
-`verificar_layout.py` carrega a tela nos três estados com o AppTest, sem
-navegador e sem transcrever nada:
-
-```bash
-python verificar_layout.py
-```
-
-## Com Docker (recomendado)
-
-Sobe a interface em http://localhost:8501:
+### Com Docker (mais fácil)
 
 ```bash
 docker compose up -d
 ```
 
-Para acompanhar os logs e derrubar:
+A interface abre em <http://localhost:8501>. O modelo `small` já vem na imagem,
+então a primeira transcrição não espera download nenhum e o container funciona
+sem rede.
 
 ```bash
-docker compose logs -f
-docker compose down
+docker compose logs -f     # acompanhar
+docker compose down        # derrubar
 ```
 
-### Acesso pela rede
+A porta é publicada em `127.0.0.1:8501:8501`, ou seja, **a tela só abre na
+própria máquina** — a aplicação não tem autenticação. Para alcançá-la de outro
+aparelho, o caminho seguro é um túnel SSH
+(`ssh -L 8501:127.0.0.1:8501 usuario@maquina`); as alternativas e o que cada uma
+expõe estão em [docs/SEGURANCA.md](docs/SEGURANCA.md#acesso-pela-rede).
 
-A porta é publicada em `127.0.0.1:8501:8501`, ou seja, **a tela só abre na própria
-máquina**. Isso é deliberado: a aplicação não tem autenticação nenhuma, e sem o
-prefixo `127.0.0.1` o Docker escuta em todas as interfaces — em wifi de café ou de
-hotel, qualquer um no mesmo segmento abriria a interface, enviaria arquivos e
-consumiria a CPU da máquina.
+### Sem Docker
 
-Para alcançar a tela de outro aparelho da LAN, troque em `docker-compose.yml`:
-
-```yaml
-    ports:
-      - "8501:8501"      # escuta em todas as interfaces
-```
-
-Faça isso apenas em rede confiável e sabendo que **não há login**: quem alcança a
-porta tem acesso completo. Para uso legítimo fora da máquina, o caminho seguro é um
-túnel SSH, que dispensa expor a porta:
-
-```bash
-ssh -L 8501:127.0.0.1:8501 usuario@maquina
-```
-
-O `--server.address=0.0.0.0` do `Dockerfile` é outra coisa e deve continuar como
-está: ele é o bind *dentro* do container, sem o qual o mapeamento de porta não
-funciona. Quem controla a exposição no host é só a linha `ports`.
-
-O modelo `small` já vem embutido na imagem, então a primeira transcrição não
-espera download nenhum e o container funciona sem rede. O limite de upload é de
-256 MB — com folga para uma reunião longa, já que uma aula de 37 min ocupa 35 MB.
-
-### CLI dentro do container
-
-A pasta `./dados` do projeto é montada em `/app/dados`. Coloque os arquivos ali:
-
-```bash
-docker compose run --rm transcricao \
-  python audioTranscricao.py dados/aula.mp3 -o dados/aula.txt
-```
-
-Apontar a saída para `dados/` faz o `.txt` aparecer no host.
-
-## Sem Docker
-
-Requer Python 3.12+. Não é necessário ter ffmpeg instalado: o faster-whisper
-decodifica mp3, mp4, mkv e afins via PyAV, que traz os próprios codecs.
+Requer Python 3.12+. Não é preciso ter ffmpeg instalado: o PyAV traz os próprios
+codecs.
 
 ```bash
 python -m venv .venv
 .venv\Scripts\Activate.ps1        # Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-Interface web:
-
-```bash
 streamlit run app.py
 ```
 
-Linha de comando:
+Na primeira execução fora do Docker, o modelo escolhido é baixado para o cache do
+Hugging Face (`~/.cache/huggingface`) — são centenas de MB.
+
+`requirements.txt` declara as dependências diretas com pisos de versão. A imagem
+instala `requirements.lock.txt`, com as 51 versões exatas já testadas; o porquê e
+o comando de regeneração estão em [docs/SEGURANCA.md](docs/SEGURANCA.md).
+
+## Como usar
+
+### Na tela
+
+1. Envie o arquivo de áudio ou vídeo (até 256 MB no container).
+2. Se quiser, abra **Opções avançadas** para escolher idioma, modelo e o
+   vocabulário do domínio.
+3. Clique em **Transcrever**. O painel mostra a fase (preparo ou transcrição), o
+   tempo decorrido, a posição no áudio e a estimativa do que falta, calculada
+   pelo ritmo observado na execução. Dá para cancelar a qualquer momento.
+4. Revise o texto no campo editável e baixe em `.txt` ou `.pdf`.
+
+Os três estados da tela, o mecanismo do cancelamento e a paleta (com as razões de
+contraste medidas) estão em [docs/INTERFACE.md](docs/INTERFACE.md).
+
+### Na linha de comando
 
 ```bash
 python audioTranscricao.py aula.mp3
 python audioTranscricao.py reuniao.mp4 -o ata.txt -l en-US -m medium
+python audioTranscricao.py entrevista.m4a -v "LIMPE, impessoalidade, RDC"
 ```
 
 | Argumento | Descrição | Padrão |
 |---|---|---|
 | `entrada` | arquivo de áudio ou vídeo | `audio1.wav` ao lado do script |
 | `-o`, `--saida` | arquivo `.txt` de saída | `transcricao_audio.txt` |
-| `-l`, `--idioma` | idioma do áudio (`en-US`, `es-ES`, ...) | `pt-BR` |
+| `-l`, `--idioma` | idioma do áudio (`en-US`, `es-ES`, ...); vazio deixa detectar | `pt-BR` |
 | `-m`, `--modelo` | `tiny`, `base`, `small`, `medium`, `large-v3` | `small` |
-| `-v`, `--vocabulario` | termos e siglas do domínio, para o modelo acertar o jargão | nenhum |
+| `-v`, `--vocabulario` | termos e siglas do domínio | nenhum |
 | `--max-horas` | teto de duração do áudio, em horas | `4` |
 | `--sem-limite` | desliga o teto (só para arquivo de origem confiável) | desligado |
 
 Sai com código 1 em caso de erro.
 
-Na primeira execução fora do Docker, o modelo escolhido é baixado para o cache do
-Hugging Face (`~/.cache/huggingface`) — são centenas de MB.
-
-## Dependências
-
-`requirements.txt` declara as dependências diretas com pisos de versão, para
-instalar à mão fora do Docker. A **imagem instala `requirements.lock.txt`**, que
-fixa as 51 versões exatas já testadas — sem isso, cada `docker build` resolveria
-para o que estivesse no PyPI naquele dia, e uma dependência transitiva
-comprometida entraria sem aviso.
-
-O lock precisa ser gerado **dentro da imagem alvo**, não no venv de
-desenvolvimento: um lock feito no Python 3.14 do Windows inclui pacotes que nem
-existem para o Python 3.12 da imagem (`audioop-lts`, por exemplo, só existe a
-partir do 3.13) e quebra o build.
-
-Para atualizar as dependências:
+Dentro do container, a pasta `./dados` do projeto é montada em `/app/dados`:
 
 ```bash
-docker run --rm -i python:3.12-slim   sh -c 'cat > /tmp/r.txt; pip install -q --no-cache-dir -r /tmp/r.txt >&2 && pip freeze'   < requirements.txt > requirements.lock.txt
+docker compose run --rm transcricao \
+  python audioTranscricao.py dados/aula.mp3 -o dados/aula.txt
 ```
 
-Depois reconstrua e teste antes de commitar: `docker compose build && docker compose up -d`.
-
-## Escolha do modelo
+### Qual modelo escolher
 
 | Modelo | Download | Precisão | Velocidade |
 |---|---|---|---|
 | `tiny` | ~75 MB | baixa | muito rápida |
 | `base` | ~145 MB | razoável | rápida |
-| `small` | ~480 MB | boa | ~1,6x o tempo real em CPU |
+| `small` (padrão) | ~480 MB | boa | ~1,6x o tempo real em CPU |
 | `medium` | ~1,5 GB | alta | várias vezes mais lenta |
 | `large-v3` | ~3 GB | melhor | mais lenta ainda |
 
 Modelos maiores acertam mais jargão, siglas e nomes próprios. Se termos do seu
 domínio saírem errados, subir de `small` para `medium` costuma resolver.
 
+## Decisões técnicas
+
+**Reconhecimento local em vez da API do Google.** A primeira versão usava o
+Google Speech Recognition e devolvia texto corrido, sem pontuação. Medido na
+mesma aula de 37 minutos, com o `verificar_transcricao.py`: **2 pontos finais e
+nenhuma vírgula** em 4.979 palavras, contra **339 pontos e 418 vírgulas** do
+faster-whisper. Um bloco de texto sem pontuação é inútil para consulta — não dá
+para achar um trecho nem para ler em diagonal. Junto vieram capitalização,
+timestamps por segmento e a independência de rede e de serviço externo.
+
+**`temperature=0.0`, para a transcrição ser reprodutível.** O padrão do
+faster-whisper reprocessa com amostragem (temperatura de 0,0 a 1,0) os segmentos
+que estouram os limiares de `compression_ratio` ou `log_prob`. Duas execuções do
+mesmo áudio divergiam em dezenas de palavras e chegaram a perder um item de uma
+enumeração. Com temperatura fixa em zero o segmento difícil sai pior, mas sai
+igual toda vez — e aí a diferença entre duas transcrições é atribuível ao que
+mudou de fato (modelo, vocabulário, pré-processamento), não ao sorteio.
+
+**Decodificação própria com PyAV, em vez do `decode_audio` da biblioteca.** O
+tamanho do arquivo não diz quanta memória ele custa: um Opus de 2,7 MB com 2 h de
+áudio vira 461 MB de float32 — amplificação de 170x — e o `decode_audio`
+decodifica tudo de uma vez antes de qualquer verificação. `decodificar_audio`
+conta as amostras enquanto decodifica e aborta ao passar do teto
+(`TRANSCRICAO_MAX_HORAS`, 4 h por padrão). Medido nesse arquivo com o teto em
+1 h: pico de **216 MB** contra **1.209 MB** do decode completo. O detalhe está em
+[docs/SEGURANCA.md](docs/SEGURANCA.md).
+
+**`vad_filter` ligado.** O detector de voz pula os trechos de silêncio, o que
+acelera a transcrição e evita o modo de falha do Whisper de repetir a mesma frase
+em loop em áudio mudo.
+
 ## Segurança
 
-### Modelo de ameaça
+A aplicação recebe um único dado de origem não confiável — o arquivo de mídia — e
+o entrega a um decodificador binário. A auditoria feita contra esse cenário está
+em **[docs/SEGURANCA.md](docs/SEGURANCA.md)**. Em resumo:
 
-Esta é uma aplicação pessoal: roda em um container na própria máquina, sem
-autenticação, sem banco de dados e sem nenhuma requisição de saída. O único dado
-de origem não confiável que ela recebe é um arquivo de mídia, que vai direto para
-um decodificador binário; o que ela devolve é texto e um PDF. A auditoria descrita
-abaixo foi feita contra esse cenário, não contra um checklist genérico de
-aplicação web.
+- **Bomba de descompressão**: dois portões contra áudio que custa muito mais
+  memória do que o tamanho do arquivo sugere — uma sonda do cabeçalho, que recusa
+  em milissegundos, e a contagem de amostras durante a decodificação, que não
+  confia em metadado nenhum.
+- **Porta só no loopback**: `127.0.0.1:8501:8501` no `docker-compose.yml`, porque
+  não há autenticação. Para acesso remoto legítimo, túnel SSH.
+- **Build reproduzível**: a imagem instala o lockfile com versões exatas, gerado
+  dentro da própria imagem de destino.
+- **Arquivo enviado**: extensão vinda de lista branca, nome do upload nunca vira
+  caminho, temporário apagado em `finally` e varredura de órfãos na inicialização.
+- Também estão documentados os pontos **verificados e corretos** (path traversal,
+  `Content-Disposition`, escape do ReportLab, XSRF, usuário não-root) e as
+  limitações abaixo.
 
-Categorias inaplicáveis foram descartadas explicitamente, em vez de preenchidas
-com "N/A" ou com controles de enfeite: **SQL injection** não existe porque não há
-banco nem consulta; **SSRF** não existe porque a aplicação não faz nenhuma
-requisição de saída — o modelo vem embutido na imagem e o reconhecimento roda
-local; **bypass de autenticação** não existe porque não há autenticação, o que é
-uma limitação real (documentada no fim desta seção) e não um controle a burlar.
-O que sobrou, e onde o esforço foi gasto: esgotamento de recursos a partir da
-mídia enviada, tratamento do arquivo recebido, exposição da porta e a cadeia de
-dependências.
-
-### O que foi corrigido
-
-#### Bomba de descompressão
-
-O tamanho do arquivo não diz quanta memória ele vai custar. O arquivo de teste é
-um Opus de **2.714.564 bytes (2,7 MB)** com **2 h** de áudio, que decodifica para
-**115.200.000 amostras** a 16 kHz, ou seja **460,8 MB** de float32 — amplificação
-de **170x**. Ele passaria folgado no limite de upload de 256 MB do Streamlit, e
-nada impedia que o mesmo truque chegasse com 8 h ou 20 h.
-
-Antes da correção, o caminho era `faster_whisper.audio.decode_audio`, que
-decodifica o arquivo inteiro de uma vez. Medido: **pico de 1.209 MB** de memória
-do processo (**+1.168 MB** sobre a linha de base de ~41 MB), em 6 a 18 s.
-
-**A solução aparentemente óbvia não funciona.** O `faster-whisper` expõe a duração
-do áudio em `info.duration`, mas esse valor só existe *depois* da decodificação
-completa — que é justamente o passo que estoura a memória. Perguntar a duração
-pelo caminho normal da biblioteca significa já ter pago o custo que se queria
-evitar.
-
-Por isso a defesa tem dois portões, em `audioTranscricao.py`, e eles atendem a
-dois cenários diferentes.
-
-**Cenário 1 — cabeçalho honesto.** O arquivo declara no container a duração que
-de fato tem. `sondar_duracao` abre o arquivo com PyAV, lê `container.duration` e
-recusa antes de decodificar qualquer coisa. Medido com o Opus de 2 h e o teto em
-1 h: recusa em **~3 ms** (2,7 a 7,6 ms), com pico de **43 MB** — **+1,9 MB** sobre
-a linha de base. Nenhum quadro de áudio chegou a ser decodificado.
-
-**Cenário 2 — cabeçalho não confiável.** A duração declarada não corresponde ao
-conteúdo. O arquivo de teste é o mesmo Opus de 2 h com a *granule position* da
-última página Ogg reescrita para 300 s (e o CRC da página recalculado, para o
-arquivo continuar válido): o PyAV passa a reportar 300 s, e o conteúdo continua
-sendo 2 h inteiras. Com o teto em 1 h, a sonda deixa passar — 300 s está dentro do
-limite — e quem barra é o segundo portão: `decodificar_audio` soma as amostras
-quadro a quadro e levanta `DuracaoExcedida` no instante em que o total passa de
-1 h. Medido: pico de **216 MB** contra os 1.209 MB do decode completo, porque a
-decodificação é interrompida na marca do teto e o array float32 nunca chega a ser
-alocado. A contagem compara com o teto configurado, não com a duração declarada
-nem com o conteúdo: os 216 MB são do teto de 1 h usado na medição — 57,6 M
-amostras, ou 115 MB de s16 nos blocos acumulados, sobre a linha de base de ~41 MB
-—, e não dos 4 h do padrão, cujos 922 MB da tabela abaixo são o float32 que aqui
-nunca é alocado. Com o teto no padrão de 4 h, este mesmo arquivo de 2 h não seria
-barrado: seria transcrito.
-
-**O cenário 2 é a razão de o segundo portão existir.** O cabeçalho é um dado sob
-controle de quem envia o arquivo: falsificá-lo custa os poucos bytes editados
-acima. Uma defesa que confie nele pode ser desligada por quem ataca, então a sonda
-não serve como única barreira — ela existe para que o caso honesto custe
-milissegundos em vez de uma decodificação inteira. O que fecha de verdade é a
-contagem, que não lê metadado nenhum.
-
-O que o segundo portão limita é **memória, não tempo**. Decodificar contando
-amostras, em Python, é cerca de duas vezes mais lento por hora de áudio que o
-`decode_audio` do faster-whisper (2 h completas: 20 a 33 s contra 9 a 17 s), e o
-custo de um arquivo hostil passa a ser proporcional ao teto, não ao conteúdo do
-arquivo. Com o teto em 1 h e um arquivo de 2 h, aborta-se na metade; com um
-arquivo de 20 h, na mesma marca de 1 h.
-
-O formato produzido por `decodificar_audio` (float32 mono 16 kHz, normalizado a
-partir de s16) é idêntico ao que `decode_audio` gerava, e o array já decodificado
-é passado ao `transcribe`, então a transcrição em si não mudou.
-
-> Condições das medições: Windows 11, Python 3.14, teto de 1 h, um processo novo
-> por medição, chamando `sondar_duracao` e `decodificar_audio` diretamente, com o
-> modelo Whisper não carregado. "Pico" é o `PeakWorkingSetSize` do processo, e a linha de base de
-> ~41 MB é o interpretador com `av`, `numpy` e o módulo importados. Os tempos
-> variam com a carga da máquina — daí as faixas; os picos de memória repetiram
-> dentro de 1%.
-
-#### Porta publicada só no loopback
-
-O `docker-compose.yml` publica `127.0.0.1:8501:8501`. Sem o prefixo, o Docker
-escuta em todas as interfaces do host e, como não há autenticação, qualquer um no
-mesmo segmento de rede abriria a interface, enviaria arquivos e consumiria a CPU
-da máquina.
-
-O `--server.address=0.0.0.0` do `Dockerfile` **permanece como está**, e não é
-contradição: são duas coisas diferentes. Ele é o bind do Streamlit *dentro* do
-container, onde `0.0.0.0` é obrigatório — com `localhost`, o processo escutaria só
-na interface interna do container e o mapeamento de porta do Docker não chegaria
-até ele. Quem controla a exposição no host é exclusivamente a linha `ports`. A
-seção **Acesso pela rede** descreve o túnel SSH para o caso de acesso remoto
-legítimo.
-
-#### Lockfile regenerado dentro da imagem de destino
-
-A imagem instala `requirements.lock.txt`, com as 51 versões exatas já testadas, e
-não `requirements.txt`, que declara apenas pisos (`>=`). Com pisos, cada
-`docker build` resolve para o que estiver no PyPI naquele dia, e uma versão
-comprometida de qualquer dependência transitiva entraria sem aviso.
-
-O lock precisa ser gerado **dentro da imagem alvo** (`python:3.12-slim`), não no
-venv de desenvolvimento, que aqui roda Python 3.14. Um `pip freeze` feito nele
-inclui pacotes que não existem para o 3.12 — `audioop-lts`, por exemplo, só existe
-a partir do 3.13 — e o `pip install` dentro da imagem falha, quebrando o build. O
-comando de regeneração está na seção **Dependências**.
-
-#### Tratamento do arquivo enviado
-
-- **Lista branca de extensão.** A extensão do arquivo temporário passou a vir de
-  `FORMATOS_ACEITOS`, e não do nome enviado. O nome nunca virou caminho, mas o
-  sufixo era repassado cru ao `tempfile`: uma extensão contendo byte nulo
-  levantava `ValueError`, e como `_salvar_upload` ficava *fora* do `try`, o erro
-  virava um traceback do Streamlit na tela, com caminhos do sistema. A chamada
-  passou para dentro do `try` e o erro vira `st.error`.
-- **Varredura de temporários órfãos.** O `finally` cobre erro, rerun e o
-  cancelamento (que é um rerun, veja **Cancelar no meio**), mas não o
-  SIGKILL — que já aconteceu nesta aplicação, com o processo morto pelo sistema
-  por falta de memória. Cada morte dessas deixava para trás um arquivo do tamanho
-  de um vídeo de reunião. Na inicialização, uma vez por processo, os arquivos com
-  o prefixo `transcricaoAudio_` e mais de 24 h são removidos; o prefixo delimita a
-  varredura aos arquivos desta aplicação.
-- **pillow atualizado** para 12.3.0 no lock, fechando os avisos do `pip-audit`. É
-  dependência transitiva do Streamlit e inalcançável neste fluxo — a mídia enviada
-  vai para o PyAV, não para ele —, então a atualização é higiene, não correção de
-  risco explorável. O `pip-audit` passa limpo no venv e no lock.
-
-### Teto de duração: `TRANSCRICAO_MAX_HORAS`
-
-Valor atual: **4 horas**. É o parâmetro que decide quanta memória um upload pode
-custar, então quem for alterá-lo precisa da aritmética:
-
-```
-amostras = horas × 3600 × 16000        (o Whisper trabalha a 16 kHz mono)
-s16      = amostras × 2 bytes          (saída do decode)
-float32  = amostras × 4 bytes          (formato que o modelo consome)
-pico     ≈ amostras × 6 bytes          (s16 e float32 vivos ao mesmo tempo, na conversão)
-```
-
-| Teto | Amostras | s16 | float32 | Pico na conversão |
-|---|---|---|---|---|
-| 1 h | 57,6 M | 115 MB | 230 MB | ~346 MB |
-| 2 h | 115,2 M | 230 MB | 461 MB | ~691 MB |
-| **4 h (padrão)** | **230,4 M** | **461 MB** | **922 MB** | **~1,4 GB** |
-| 8 h | 460,8 M | 922 MB | 1,8 GB | ~2,8 GB |
-
-Esses números são só dos arrays de áudio. O processo carrega ainda o
-interpretador, o numpy, o PyAV e (na transcrição) o modelo, então o pico real é
-maior que a coluna da direita: no arquivo de teste de 2 h, a tabela prevê ~691 MB
-e o pico medido do decode completo foi de **1.209 MB**. Em máquina apertada,
-abaixe o teto.
-
-Para mudar o valor:
-
-```bash
-TRANSCRICAO_MAX_HORAS=8 python audioTranscricao.py aula.mp3   # variável de ambiente
-python audioTranscricao.py aula.mp3 --max-horas 8             # só nesta execução
-python audioTranscricao.py aula.mp3 --sem-limite              # desliga os dois portões
-```
-
-No container, passe a variável em `docker-compose.yml`:
-
-```yaml
-    environment:
-      - TRANSCRICAO_MAX_HORAS=8
-```
-
-O `--sem-limite` existe para arquivo de origem confiável na linha de comando; a
-interface web não o oferece.
-
-### O que foi verificado e estava correto
-
-Faz parte do resultado da auditoria, e está aqui porque um leitor não tem como
-distinguir "verificado e correto" de "não olhado":
-
-- **Path traversal no nome do upload.** Testado com 10 nomes de arquivo hostis.
-  `upload.name` nunca é usado como caminho: o conteúdo vai para um
-  `NamedTemporaryFile` com nome gerado pelo sistema, e do nome enviado se
-  aproveita apenas a extensão — que hoje ainda passa pela lista branca. O nome dos
-  downloads passa por `os.path.basename` antes de qualquer uso.
-- **Injeção no `Content-Disposition`.** O nome dos arquivos baixados vem de
-  `_nome_base`, que aplica `os.path.basename` e `os.path.splitext` sobre o nome
-  enviado, e o cabeçalho é montado pelo próprio Streamlit. Não foi encontrado
-  caminho para injetar CR/LF ou parâmetros extras no cabeçalho.
-- **Escape do markup do reportlab, inclusive no cabeçalho.** O `Paragraph` do
-  reportlab interpreta o conteúdo como markup, então um `&` ou `<` solto quebra a
-  geração. Todo parágrafo do corpo passa por `xml.sax.saxutils.escape` — e também
-  as linhas de metadados do cabeçalho, que é o ponto fácil de esquecer:
-  `_linhas_cabecalho` escapa `nome_origem`, o nome do arquivo enviado, que é a
-  única string do PDF vinda de fora sem ter passado pela transcrição.
-- **XSRF.** A proteção XSRF do Streamlit (`server.enableXsrfProtection`) vem
-  ligada por padrão e o `Dockerfile` não a desliga. Cada flag do `CMD` foi
-  revisada; nenhuma afrouxa a configuração padrão.
-- **Usuário não-root.** O container roda como `transcricao`. O usuário é criado no
-  início do `Dockerfile`, antes do download do modelo, para o cache já nascer com
-  o dono certo, e o `USER` é ativado antes do `COPY` do código.
-- **Histórico do git.** Varrido em busca de credenciais, tokens e mídia pessoal
-  que tivesse entrado em algum commit antigo. Limpo.
-
-### Limitações conhecidas
+## Limitações conhecidas
 
 - **Não há autenticação.** Quem alcança a porta tem acesso completo: envia
   arquivos, consome a CPU e lê as transcrições da sessão. A proteção é o binding
@@ -479,27 +213,25 @@ distinguir "verificado e correto" de "não olhado":
   *artefato*. Um pacote substituído no índice mantendo o mesmo número de versão
   ainda passaria. Fechar isso exigiria um lock com hashes
   (`pip-compile --generate-hashes`) instalado com `pip install --require-hashes`.
+- **A transcrição ocupa uma execução por vez.** O Streamlit roda o script numa
+  thread só: enquanto um áudio é transcrito, aquela sessão fica ocupada. É
+  suficiente para uso pessoal, que é o caso de uso do projeto.
 
-## Formatos aceitos
-
-`mp3`, `wav`, `m4a`, `ogg`, `flac`, `aiff`, `mp4`, `mkv`, `avi`, `mov`.
-
-## Medindo a qualidade de uma transcrição
-
-`verificar_transcricao.py` transcreve um arquivo e relata contagem de palavras,
-pontuação, parágrafos, presença de termos do domínio e repetições em loop:
-
-```bash
-python verificar_transcricao.py dados/aula.mp3 small
-```
-
-## Arquivos
+## Estrutura do repositório
 
 | Arquivo | Papel |
 |---|---|
 | `app.py` | interface Streamlit |
-| `.streamlit/config.toml` | tema da interface (cor, fonte, bordas) e toolbar |
 | `audioTranscricao.py` | motor de transcrição e CLI |
 | `gerar_pdf.py` | exportação do texto revisado em PDF |
-| `verificar_transcricao.py` | métricas de qualidade da transcrição |
-| `verificar_layout.py` | confere os três estados da tela com o AppTest |
+| `.streamlit/config.toml` | tema da interface (paleta, fonte, bordas) |
+| `verificar_transcricao.py` | métricas de qualidade de uma transcrição (pontuação, jargão, repetição em loop) |
+| `verificar_layout.py` | carrega a tela nos três estados e no cancelamento, com o AppTest |
+| `Dockerfile`, `docker-compose.yml` | imagem com o modelo embutido e porta em loopback |
+| `docs/` | [segurança](docs/SEGURANCA.md) e [interface](docs/INTERFACE.md) em detalhe |
+
+## Licença
+
+Sem licença definida: o repositório não tem arquivo `LICENSE`, então o código não
+está liberado para redistribuição. Para abrir o uso, o caminho é acrescentar um
+`LICENSE` (MIT, por exemplo).
