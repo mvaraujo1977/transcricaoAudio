@@ -164,41 +164,66 @@ dependências.
 
 #### Bomba de descompressão
 
-O tamanho do arquivo não diz quanta memória ele vai custar. Um arquivo Opus de
-**2,7 MB** (6 kbps, 2 h de áudio) decodifica para **461 MB** de float32 a 16 kHz
-— amplificação de **170x**. Medido antes da correção: **12 s** de processamento e
-**1.164 MB** de pico de memória do processo, a partir de um upload que passaria
-folgado em qualquer limite de tamanho (o teto de upload do Streamlit é 256 MB).
-Nada impedia que o mesmo arquivo chegasse com 4 h, 8 h ou 20 h de áudio.
+O tamanho do arquivo não diz quanta memória ele vai custar. O arquivo de teste é
+um Opus de **2.714.564 bytes (2,7 MB)** com **2 h** de áudio, que decodifica para
+**115.200.000 amostras** a 16 kHz, ou seja **460,8 MB** de float32 — amplificação
+de **170x**. Ele passaria folgado no limite de upload de 256 MB do Streamlit, e
+nada impedia que o mesmo truque chegasse com 8 h ou 20 h.
 
-**A solução aparentemente óbvia não funciona.** O `faster-whisper` expõe a
-duração do áudio em `info.duration`, mas esse valor só existe *depois* da
-decodificação completa — que é justamente o passo que estoura a memória. Perguntar
-a duração pelo caminho normal da biblioteca significa já ter pago o custo que se
-queria evitar.
+Antes da correção, o caminho era `faster_whisper.audio.decode_audio`, que
+decodifica o arquivo inteiro de uma vez. Medido: **pico de 1.209 MB** de memória
+do processo (**+1.168 MB** sobre a linha de base de ~41 MB), em 6 a 18 s.
 
-A correção está em `audioTranscricao.py` e tem dois portões:
+**A solução aparentemente óbvia não funciona.** O `faster-whisper` expõe a duração
+do áudio em `info.duration`, mas esse valor só existe *depois* da decodificação
+completa — que é justamente o passo que estoura a memória. Perguntar a duração
+pelo caminho normal da biblioteca significa já ter pago o custo que se queria
+evitar.
 
-1. **Sonda de duração** (`sondar_duracao`), antes de qualquer decodificação: abre
-   o container com PyAV e lê a duração declarada no cabeçalho. Custa **4 ms e
-   0,14 MB**, e recusa de imediato o arquivo que se declara longo demais.
-2. **Contagem de amostras durante o decode próprio** (`decodificar_audio`): a
-   decodificação passou a ser feita aqui, quadro a quadro, somando amostras e
-   abortando com `DuracaoExcedida` no instante em que o total ultrapassa o teto.
+Por isso a defesa tem dois portões, em `audioTranscricao.py`, e eles atendem a
+dois cenários diferentes.
 
-O segundo portão é o que de fato fecha, e a razão está no modelo de ameaça: o
-cabeçalho é dado fornecido por quem envia o arquivo. Um arquivo que minta sobre a
-própria duração atravessa a sonda; a contagem de amostras não depende do
-cabeçalho e o interrompe do mesmo jeito. A sonda existe para que o caso honesto
-custe milissegundos em vez de uma decodificação inteira.
+**Cenário 1 — cabeçalho honesto.** O arquivo declara no container a duração que
+de fato tem. `sondar_duracao` abre o arquivo com PyAV, lê `container.duration` e
+recusa antes de decodificar qualquer coisa. Medido com o Opus de 2 h e o teto em
+1 h: recusa em **~3 ms** (2,7 a 7,6 ms), com pico de **43 MB** — **+1,9 MB** sobre
+a linha de base. Nenhum quadro de áudio chegou a ser decodificado.
 
-Medido depois da correção, no mesmo arquivo: **recusa em 2,2 s com 40 MB** de
-pico, contra 12 s e 1.164 MB.
+**Cenário 2 — cabeçalho não confiável.** A duração declarada não corresponde ao
+conteúdo. O arquivo de teste é o mesmo Opus de 2 h com a *granule position* da
+última página Ogg reescrita para 300 s (e o CRC da página recalculado, para o
+arquivo continuar válido): o PyAV passa a reportar 300 s, e o conteúdo continua
+sendo 2 h inteiras. Com o teto em 1 h, a sonda deixa passar — 300 s está dentro do
+limite — e quem barra é o segundo portão: `decodificar_audio` soma as amostras
+quadro a quadro e levanta `DuracaoExcedida` no instante em que o total passa de
+1 h. Medido: pico de **216 MB** contra os 1.209 MB do decode completo, porque a
+decodificação é interrompida na marca do teto e o array float32 nunca chega a ser
+alocado.
+
+**O cenário 2 é a razão de o segundo portão existir.** O cabeçalho é um dado sob
+controle de quem envia o arquivo: falsificá-lo custa os poucos bytes editados
+acima. Uma defesa que confie nele pode ser desligada por quem ataca, então a sonda
+não serve como única barreira — ela existe para que o caso honesto custe
+milissegundos em vez de uma decodificação inteira. O que fecha de verdade é a
+contagem, que não lê metadado nenhum.
+
+O que o segundo portão limita é **memória, não tempo**. Decodificar contando
+amostras, em Python, é cerca de duas vezes mais lento por hora de áudio que o
+`decode_audio` do faster-whisper (2 h completas: 20 a 33 s contra 9 a 17 s), e o
+custo de um arquivo hostil passa a ser proporcional ao teto, não ao conteúdo do
+arquivo. Com o teto em 1 h e um arquivo de 2 h, aborta-se na metade; com um
+arquivo de 20 h, na mesma marca de 1 h.
 
 O formato produzido por `decodificar_audio` (float32 mono 16 kHz, normalizado a
-partir de s16) é idêntico ao que `faster_whisper.audio.decode_audio` gerava, e o
-array já decodificado é passado ao `transcribe`, então a transcrição em si não
-mudou.
+partir de s16) é idêntico ao que `decode_audio` gerava, e o array já decodificado
+é passado ao `transcribe`, então a transcrição em si não mudou.
+
+> Condições das medições: Windows 11, Python 3.14, teto de 1 h, um processo novo
+> por medição, chamando `sondar_duracao` e `decodificar_audio` diretamente, com o
+> modelo Whisper não carregado. "Pico" é o `PeakWorkingSetSize` do processo, e a linha de base de
+> ~41 MB é o interpretador com `av`, `numpy` e o módulo importados. Os tempos
+> variam com a carga da máquina — daí as faixas; os picos de memória repetiram
+> dentro de 1%.
 
 #### Porta publicada só no loopback
 
@@ -267,8 +292,10 @@ pico     ≈ amostras × 6 bytes          (s16 e float32 vivos ao mesmo tempo, n
 | 8 h | 460,8 M | 922 MB | 1,8 GB | ~2,8 GB |
 
 Esses números são só dos arrays de áudio. O processo carrega ainda o
-interpretador, o numpy, o PyAV e o modelo, então o pico real medido é maior — os
-1.164 MB citados acima, para 2 h de áudio. Em máquina apertada, abaixe o teto.
+interpretador, o numpy, o PyAV e (na transcrição) o modelo, então o pico real é
+maior que a coluna da direita: no arquivo de teste de 2 h, a tabela prevê ~691 MB
+e o pico medido do decode completo foi de **1.209 MB**. Em máquina apertada,
+abaixe o teto.
 
 Para mudar o valor:
 

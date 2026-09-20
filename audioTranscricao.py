@@ -35,9 +35,9 @@ LIMITE_TOKENS_VOCABULARIO = 224
 
 # O faster-whisper decodifica o arquivo inteiro para um array float32 de 16 kHz
 # antes de transcrever, e só então expõe a duração. Isso torna a duração inútil
-# como defesa: a memória já foi gasta. Um Opus de 6 kbps com 2 h de áudio ocupa
-# 2,7 MB em disco e 1,1 GB ao decodificar -- 170x. O teto abaixo é aplicado por
-# nós, durante a decodificação, contando amostras.
+# como defesa: a memória já foi gasta. Um Opus com 2 h de áudio ocupa 2,7 MB em
+# disco e vira 461 MB de float32 -- 170x --, com pico de 1.209 MB no processo. O
+# teto abaixo é aplicado por nós, durante a decodificação, contando amostras.
 #
 # Custo do teto padrão: 4 h = 230,4 M amostras = 461 MB em s16 e 922 MB em
 # float32. O pico transitório da conversão fica em ~1,4 GB. Abaixe
