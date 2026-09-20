@@ -34,13 +34,13 @@ FIM_DE_FRASE = ('.', '!', '?')
 LIMITE_TOKENS_VOCABULARIO = 224
 
 # O faster-whisper decodifica o arquivo inteiro para um array float32 de 16 kHz
-# antes de transcrever, e so entao expoe a duracao. Isso torna a duracao inutil
-# como defesa: a memoria ja foi gasta. Um Opus de 6 kbps com 2 h de audio ocupa
-# 2,7 MB em disco e 1,1 GB ao decodificar -- 170x. O teto abaixo e aplicado por
-# nos, durante a decodificacao, contando amostras.
+# antes de transcrever, e só então expõe a duração. Isso torna a duração inútil
+# como defesa: a memória já foi gasta. Um Opus de 6 kbps com 2 h de áudio ocupa
+# 2,7 MB em disco e 1,1 GB ao decodificar -- 170x. O teto abaixo é aplicado por
+# nós, durante a decodificação, contando amostras.
 #
-# Custo do teto padrao: 4 h = 230,4 M amostras = 461 MB em s16 e 922 MB em
-# float32. O pico transitorio da conversao fica em ~1,4 GB. Abaixe
+# Custo do teto padrão: 4 h = 230,4 M amostras = 461 MB em s16 e 922 MB em
+# float32. O pico transitório da conversão fica em ~1,4 GB. Abaixe
 # TRANSCRICAO_MAX_HORAS numa maquina apertada.
 LIMITE_HORAS_PADRAO = 4.0
 VARIAVEL_LIMITE = 'TRANSCRICAO_MAX_HORAS'
@@ -95,9 +95,9 @@ def preparar_vocabulario(vocabulario, modelo=MODELO_PADRAO):
 
 
 class DuracaoExcedida(ValueError):
-    """Audio mais longo que o teto configurado.
+    """Áudio mais longo que o teto configurado.
 
-    Herda de ValueError para ser capturada pelo mesmo `except` que ja trata os
+    Herda de ValueError para ser capturada pelo mesmo `except` que já trata os
     demais erros de entrada, na CLI e na interface.
     """
 
@@ -110,14 +110,14 @@ def _duracao_legivel(segundos):
 
 
 def limite_horas():
-    """Teto de duracao em horas, configuravel por TRANSCRICAO_MAX_HORAS."""
+    """Teto de duração em horas, configurável por TRANSCRICAO_MAX_HORAS."""
     bruto = os.environ.get(VARIAVEL_LIMITE)
     if not bruto or not bruto.strip():
         return LIMITE_HORAS_PADRAO
     try:
         valor = float(bruto)
     except ValueError:
-        raise ValueError("{0} precisa ser um numero em horas; veio {1!r}".format(
+        raise ValueError("{0} precisa ser um número em horas; veio {1!r}".format(
             VARIAVEL_LIMITE, bruto))
     if valor <= 0:
         raise ValueError("{0} precisa ser maior que zero; veio {1!r}".format(
@@ -126,11 +126,11 @@ def limite_horas():
 
 
 def sondar_duracao(caminho):
-    """Duracao declarada no arquivo, em segundos, sem decodificar nada.
+    """Duração declarada no arquivo, em segundos, sem decodificar nada.
 
-    Custa milissegundos: le so o cabecalho do container. Devolve None quando o
-    formato nao declara duracao. O valor vem do arquivo, ou seja, de quem o
-    enviou -- serve para recusar cedo o caso obvio, nunca como unica defesa.
+    Custa milissegundos: lê só o cabeçalho do container. Devolve None quando o
+    formato não declara duração. O valor vem do arquivo, ou seja, de quem o
+    enviou -- serve para recusar cedo o caso óbvio, nunca como única defesa.
     """
     with av.open(caminho) as container:
         if container.duration is not None:
@@ -144,12 +144,12 @@ def sondar_duracao(caminho):
 def decodificar_audio(caminho, limite_segundos):
     """Decodifica para float32 mono 16 kHz, abortando ao passar do teto.
 
-    Este e o portao que de fato fecha: conta amostras durante a decodificacao e
-    para no instante em que o teto e ultrapassado, sem depender do cabecalho.
-    Um arquivo que minta sobre a propria duracao e interrompido do mesmo jeito.
+    Este é o portão que de fato fecha: conta amostras durante a decodificação e
+    para no instante em que o teto é ultrapassado, sem depender do cabeçalho.
+    Um arquivo que minta sobre a própria duração é interrompido do mesmo jeito.
 
-    O formato de saida (float32 normalizado a partir de s16) e identico ao que
-    o faster_whisper.audio.decode_audio produz, para a transcricao nao mudar.
+    O formato de saída (float32 normalizado a partir de s16) é idêntico ao que
+    o faster_whisper.audio.decode_audio produz, para a transcrição não mudar.
     """
     # --sem-limite chega aqui como infinito, que não vira int: nesse caso não há
     # teto a comparar e a contagem serve só para saber se veio algum áudio.
@@ -172,17 +172,17 @@ def decodificar_audio(caminho, limite_segundos):
 
     with av.open(caminho) as container:
         if not container.streams.audio:
-            raise RuntimeError("O arquivo nao tem trilha de audio")
+            raise RuntimeError("O arquivo não tem trilha de áudio")
         for quadro in container.decode(audio=0):
             quadro.pts = None
             acumular(resampler.resample(quadro))
         acumular(resampler.resample(None))
 
     if not blocos:
-        raise RuntimeError("Nao foi possivel decodificar audio do arquivo")
+        raise RuntimeError("Não foi possível decodificar áudio do arquivo")
 
     amostras = np.concatenate(blocos)
-    blocos.clear()  # libera os pedacos antes de alocar o float32, que e o dobro
+    blocos.clear()  # libera os pedaços antes de alocar o float32, que é o dobro
     return amostras.astype(np.float32) / 32768.0
 
 
