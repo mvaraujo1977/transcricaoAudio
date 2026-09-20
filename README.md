@@ -139,25 +139,143 @@ Depois reconstrua e teste antes de commitar: `docker compose build && docker com
 Modelos maiores acertam mais jargão, siglas e nomes próprios. Se termos do seu
 domínio saírem errados, subir de `small` para `medium` costuma resolver.
 
-## Limite de duração
+## Segurança
 
-O tamanho do arquivo não diz quanta CPU e memória ele vai custar. Áudio em codec
-de alta compressão amplifica muito ao decodificar: um Opus de 6 kbps com 2 h de
-duração ocupa **2,7 MB em disco e 1,1 GB decodificado** — 170x. Como o motor
-precisa do áudio inteiro em memória antes de transcrever, um arquivo pequeno
-bastava para esgotar a máquina.
+### Modelo de ameaça
 
-Por isso a transcrição recusa áudio acima de **4 horas**, em dois portões: uma
-sonda lê a duração declarada no cabeçalho em milissegundos, e a decodificação
-conta amostras e aborta no instante em que passa do teto — esse segundo portão
-não depende do cabeçalho, que é dado de quem enviou o arquivo.
+Esta é uma aplicação pessoal: roda em um container na própria máquina, sem
+autenticação, sem banco de dados e sem nenhuma requisição de saída. O único dado
+de origem não confiável que ela recebe é um arquivo de mídia, que vai direto para
+um decodificador binário; o que ela devolve é texto e um PDF. A auditoria descrita
+abaixo foi feita contra esse cenário, não contra um checklist genérico de
+aplicação web.
 
-Para mudar o teto:
+Categorias inaplicáveis foram descartadas explicitamente, em vez de preenchidas
+com "N/A" ou com controles de enfeite: **SQL injection** não existe porque não há
+banco nem consulta; **SSRF** não existe porque a aplicação não faz nenhuma
+requisição de saída — o modelo vem embutido na imagem e o reconhecimento roda
+local; **bypass de autenticação** não existe porque não há autenticação, o que é
+uma limitação real (documentada no fim desta seção) e não um controle a burlar.
+O que sobrou, e onde o esforço foi gasto: esgotamento de recursos a partir da
+mídia enviada, tratamento do arquivo recebido, exposição da porta e a cadeia de
+dependências.
+
+### O que foi corrigido
+
+#### Bomba de descompressão
+
+O tamanho do arquivo não diz quanta memória ele vai custar. Um arquivo Opus de
+**2,7 MB** (6 kbps, 2 h de áudio) decodifica para **461 MB** de float32 a 16 kHz
+— amplificação de **170x**. Medido antes da correção: **12 s** de processamento e
+**1.164 MB** de pico de memória do processo, a partir de um upload que passaria
+folgado em qualquer limite de tamanho (o teto de upload do Streamlit é 256 MB).
+Nada impedia que o mesmo arquivo chegasse com 4 h, 8 h ou 20 h de áudio.
+
+**A solução aparentemente óbvia não funciona.** O `faster-whisper` expõe a
+duração do áudio em `info.duration`, mas esse valor só existe *depois* da
+decodificação completa — que é justamente o passo que estoura a memória. Perguntar
+a duração pelo caminho normal da biblioteca significa já ter pago o custo que se
+queria evitar.
+
+A correção está em `audioTranscricao.py` e tem dois portões:
+
+1. **Sonda de duração** (`sondar_duracao`), antes de qualquer decodificação: abre
+   o container com PyAV e lê a duração declarada no cabeçalho. Custa **4 ms e
+   0,14 MB**, e recusa de imediato o arquivo que se declara longo demais.
+2. **Contagem de amostras durante o decode próprio** (`decodificar_audio`): a
+   decodificação passou a ser feita aqui, quadro a quadro, somando amostras e
+   abortando com `DuracaoExcedida` no instante em que o total ultrapassa o teto.
+
+O segundo portão é o que de fato fecha, e a razão está no modelo de ameaça: o
+cabeçalho é dado fornecido por quem envia o arquivo. Um arquivo que minta sobre a
+própria duração atravessa a sonda; a contagem de amostras não depende do
+cabeçalho e o interrompe do mesmo jeito. A sonda existe para que o caso honesto
+custe milissegundos em vez de uma decodificação inteira.
+
+Medido depois da correção, no mesmo arquivo: **recusa em 2,2 s com 40 MB** de
+pico, contra 12 s e 1.164 MB.
+
+O formato produzido por `decodificar_audio` (float32 mono 16 kHz, normalizado a
+partir de s16) é idêntico ao que `faster_whisper.audio.decode_audio` gerava, e o
+array já decodificado é passado ao `transcribe`, então a transcrição em si não
+mudou.
+
+#### Porta publicada só no loopback
+
+O `docker-compose.yml` publica `127.0.0.1:8501:8501`. Sem o prefixo, o Docker
+escuta em todas as interfaces do host e, como não há autenticação, qualquer um no
+mesmo segmento de rede abriria a interface, enviaria arquivos e consumiria a CPU
+da máquina.
+
+O `--server.address=0.0.0.0` do `Dockerfile` **permanece como está**, e não é
+contradição: são duas coisas diferentes. Ele é o bind do Streamlit *dentro* do
+container, onde `0.0.0.0` é obrigatório — com `localhost`, o processo escutaria só
+na interface interna do container e o mapeamento de porta do Docker não chegaria
+até ele. Quem controla a exposição no host é exclusivamente a linha `ports`. A
+seção **Acesso pela rede** descreve o túnel SSH para o caso de acesso remoto
+legítimo.
+
+#### Lockfile regenerado dentro da imagem de destino
+
+A imagem instala `requirements.lock.txt`, com as 51 versões exatas já testadas, e
+não `requirements.txt`, que declara apenas pisos (`>=`). Com pisos, cada
+`docker build` resolve para o que estiver no PyPI naquele dia, e uma versão
+comprometida de qualquer dependência transitiva entraria sem aviso.
+
+O lock precisa ser gerado **dentro da imagem alvo** (`python:3.12-slim`), não no
+venv de desenvolvimento, que aqui roda Python 3.14. Um `pip freeze` feito nele
+inclui pacotes que não existem para o 3.12 — `audioop-lts`, por exemplo, só existe
+a partir do 3.13 — e o `pip install` dentro da imagem falha, quebrando o build. O
+comando de regeneração está na seção **Dependências**.
+
+#### Tratamento do arquivo enviado
+
+- **Lista branca de extensão.** A extensão do arquivo temporário passou a vir de
+  `FORMATOS_ACEITOS`, e não do nome enviado. O nome nunca virou caminho, mas o
+  sufixo era repassado cru ao `tempfile`: uma extensão contendo byte nulo
+  levantava `ValueError`, e como `_salvar_upload` ficava *fora* do `try`, o erro
+  virava um traceback do Streamlit na tela, com caminhos do sistema. A chamada
+  passou para dentro do `try` e o erro vira `st.error`.
+- **Varredura de temporários órfãos.** O `finally` cobre erro e rerun, mas não
+  SIGKILL — que já aconteceu nesta aplicação, com o processo morto pelo sistema
+  por falta de memória. Cada morte dessas deixava para trás um arquivo do tamanho
+  de um vídeo de reunião. Na inicialização, uma vez por processo, os arquivos com
+  o prefixo `transcricaoAudio_` e mais de 24 h são removidos; o prefixo delimita a
+  varredura aos arquivos desta aplicação.
+- **pillow atualizado** para 12.3.0 no lock, fechando os avisos do `pip-audit`. É
+  dependência transitiva do Streamlit e inalcançável neste fluxo — a mídia enviada
+  vai para o PyAV, não para ele —, então a atualização é higiene, não correção de
+  risco explorável. O `pip-audit` passa limpo no venv e no lock.
+
+### Teto de duração: `TRANSCRICAO_MAX_HORAS`
+
+Valor atual: **4 horas**. É o parâmetro que decide quanta memória um upload pode
+custar, então quem for alterá-lo precisa da aritmética:
+
+```
+amostras = horas × 3600 × 16000        (o Whisper trabalha a 16 kHz mono)
+s16      = amostras × 2 bytes          (saída do decode)
+float32  = amostras × 4 bytes          (formato que o modelo consome)
+pico     ≈ amostras × 6 bytes          (s16 e float32 vivos ao mesmo tempo, na conversão)
+```
+
+| Teto | Amostras | s16 | float32 | Pico na conversão |
+|---|---|---|---|---|
+| 1 h | 57,6 M | 115 MB | 230 MB | ~346 MB |
+| 2 h | 115,2 M | 230 MB | 461 MB | ~691 MB |
+| **4 h (padrão)** | **230,4 M** | **461 MB** | **922 MB** | **~1,4 GB** |
+| 8 h | 460,8 M | 922 MB | 1,8 GB | ~2,8 GB |
+
+Esses números são só dos arrays de áudio. O processo carrega ainda o
+interpretador, o numpy, o PyAV e o modelo, então o pico real medido é maior — os
+1.164 MB citados acima, para 2 h de áudio. Em máquina apertada, abaixe o teto.
+
+Para mudar o valor:
 
 ```bash
 TRANSCRICAO_MAX_HORAS=8 python audioTranscricao.py aula.mp3   # variável de ambiente
 python audioTranscricao.py aula.mp3 --max-horas 8             # só nesta execução
-python audioTranscricao.py aula.mp3 --sem-limite              # sem teto algum
+python audioTranscricao.py aula.mp3 --sem-limite              # desliga os dois portões
 ```
 
 No container, passe a variável em `docker-compose.yml`:
@@ -167,8 +285,56 @@ No container, passe a variável em `docker-compose.yml`:
       - TRANSCRICAO_MAX_HORAS=8
 ```
 
-Custo de memória do teto: 4 h equivalem a 922 MB de áudio em float32, com pico
-transitório de ~1,4 GB durante a conversão. Numa máquina apertada, abaixe.
+O `--sem-limite` existe para arquivo de origem confiável na linha de comando; a
+interface web não o oferece.
+
+### O que foi verificado e estava correto
+
+Faz parte do resultado da auditoria, e está aqui porque um leitor não tem como
+distinguir "verificado e correto" de "não olhado":
+
+- **Path traversal no nome do upload.** Testado com 10 nomes de arquivo hostis.
+  `upload.name` nunca é usado como caminho: o conteúdo vai para um
+  `NamedTemporaryFile` com nome gerado pelo sistema, e do nome enviado se
+  aproveita apenas a extensão — que hoje ainda passa pela lista branca. O nome dos
+  downloads passa por `os.path.basename` antes de qualquer uso.
+- **Injeção no `Content-Disposition`.** O nome dos arquivos baixados vem de
+  `_nome_base`, que aplica `os.path.basename` e `os.path.splitext` sobre o nome
+  enviado, e o cabeçalho é montado pelo próprio Streamlit. Não foi encontrado
+  caminho para injetar CR/LF ou parâmetros extras no cabeçalho.
+- **Escape do markup do reportlab, inclusive no cabeçalho.** O `Paragraph` do
+  reportlab interpreta o conteúdo como markup, então um `&` ou `<` solto quebra a
+  geração. Todo parágrafo do corpo passa por `xml.sax.saxutils.escape` — e também
+  as linhas de metadados do cabeçalho, que é o ponto fácil de esquecer:
+  `_linhas_cabecalho` escapa `nome_origem`, o nome do arquivo enviado, que é a
+  única string do PDF vinda de fora sem ter passado pela transcrição.
+- **XSRF.** A proteção XSRF do Streamlit (`server.enableXsrfProtection`) vem
+  ligada por padrão e o `Dockerfile` não a desliga. Cada flag do `CMD` foi
+  revisada; nenhuma afrouxa a configuração padrão.
+- **Usuário não-root.** O container roda como `transcricao`. O usuário é criado no
+  início do `Dockerfile`, antes do download do modelo, para o cache já nascer com
+  o dono certo, e o `USER` é ativado antes do `COPY` do código.
+- **Histórico do git.** Varrido em busca de credenciais, tokens e mídia pessoal
+  que tivesse entrado em algum commit antigo. Limpo.
+
+### Limitações conhecidas
+
+- **Não há autenticação.** Quem alcança a porta tem acesso completo: envia
+  arquivos, consome a CPU e lê as transcrições da sessão. A proteção é o binding
+  em loopback, e nada além disso. Trocar `127.0.0.1:8501:8501` por `8501:8501`
+  remove a única barreira que existe.
+- **O `pip-audit` não enxerga as CVEs do FFmpeg embutido no PyAV.** O pacote `av`
+  traz os próprios codecs como binários compilados, e é exatamente ele que recebe
+  a mídia não confiável — a maior superfície de parsing binário do projeto. O
+  `pip-audit` verifica a versão do pacote Python, não o FFmpeg que está dentro
+  dele, então uma CVE de decodificador não aparece em varredura de dependências.
+  Acompanhar isso exige seguir os avisos de segurança do próprio FFmpeg e subir a
+  versão do `av` quando saírem.
+- **O lock fixa versões, mas não grava hashes.** `requirements.lock.txt` é um
+  `pip freeze`: torna o build reproduzível em termos de *versão*, não de
+  *artefato*. Um pacote substituído no índice mantendo o mesmo número de versão
+  ainda passaria. Fechar isso exigiria um lock com hashes
+  (`pip-compile --generate-hashes`) instalado com `pip install --require-hashes`.
 
 ## Formatos aceitos
 
