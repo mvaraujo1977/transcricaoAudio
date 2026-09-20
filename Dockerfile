@@ -34,10 +34,14 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 #                                do container e o mapeamento de porta não funciona
 #   --server.headless=true       evita abrir navegador e o prompt de e-mail inicial
 #   --browser.gatherUsageStats   desliga a telemetria
-#   --server.maxUploadSize=1024  o default de 200 MB não cobre um vídeo de reunião
+#   --server.maxUploadSize=256   o default de 200 MB nao cobre um video de reuniao
+#                                longa; 256 MB cobre com folga (uma aula de 37 min
+#                                tem 35 MB) sem virar munição para exaurir a máquina.
+#                                O teto de DURAÇÃO fica em audioTranscricao.py: o
+#                                tamanho do arquivo não limita o áudio decodificado.
 CMD ["streamlit", "run", "app.py", \
      "--server.address=0.0.0.0", \
      "--server.headless=true", \
      "--server.port=8501", \
      "--browser.gatherUsageStats=false", \
-     "--server.maxUploadSize=1024"]
+     "--server.maxUploadSize=256"]

@@ -53,7 +53,7 @@ funciona. Quem controla a exposição no host é só a linha `ports`.
 
 O modelo `small` já vem embutido na imagem, então a primeira transcrição não
 espera download nenhum e o container funciona sem rede. O limite de upload é de
-1 GB (o padrão do Streamlit, 200 MB, não cobre um vídeo de reunião longa).
+256 MB — com folga para uma reunião longa, já que uma aula de 37 min ocupa 35 MB.
 
 ### CLI dentro do container
 
@@ -97,6 +97,8 @@ python audioTranscricao.py reuniao.mp4 -o ata.txt -l en-US -m medium
 | `-l`, `--idioma` | idioma do áudio (`en-US`, `es-ES`, ...) | `pt-BR` |
 | `-m`, `--modelo` | `tiny`, `base`, `small`, `medium`, `large-v3` | `small` |
 | `-v`, `--vocabulario` | termos e siglas do domínio, para o modelo acertar o jargão | nenhum |
+| `--max-horas` | teto de duração do áudio, em horas | `4` |
+| `--sem-limite` | desliga o teto (só para arquivo de origem confiável) | desligado |
 
 Sai com código 1 em caso de erro.
 
@@ -115,6 +117,37 @@ Hugging Face (`~/.cache/huggingface`) — são centenas de MB.
 
 Modelos maiores acertam mais jargão, siglas e nomes próprios. Se termos do seu
 domínio saírem errados, subir de `small` para `medium` costuma resolver.
+
+## Limite de duração
+
+O tamanho do arquivo não diz quanta CPU e memória ele vai custar. Áudio em codec
+de alta compressão amplifica muito ao decodificar: um Opus de 6 kbps com 2 h de
+duração ocupa **2,7 MB em disco e 1,1 GB decodificado** — 170x. Como o motor
+precisa do áudio inteiro em memória antes de transcrever, um arquivo pequeno
+bastava para esgotar a máquina.
+
+Por isso a transcrição recusa áudio acima de **4 horas**, em dois portões: uma
+sonda lê a duração declarada no cabeçalho em milissegundos, e a decodificação
+conta amostras e aborta no instante em que passa do teto — esse segundo portão
+não depende do cabeçalho, que é dado de quem enviou o arquivo.
+
+Para mudar o teto:
+
+```bash
+TRANSCRICAO_MAX_HORAS=8 python audioTranscricao.py aula.mp3   # variável de ambiente
+python audioTranscricao.py aula.mp3 --max-horas 8             # só nesta execução
+python audioTranscricao.py aula.mp3 --sem-limite              # sem teto algum
+```
+
+No container, passe a variável em `docker-compose.yml`:
+
+```yaml
+    environment:
+      - TRANSCRICAO_MAX_HORAS=8
+```
+
+Custo de memória do teto: 4 h equivalem a 922 MB de áudio em float32, com pico
+transitório de ~1,4 GB durante a conversão. Numa máquina apertada, abaixe.
 
 ## Formatos aceitos
 

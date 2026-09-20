@@ -6,6 +6,9 @@ import functools
 import os
 import sys
 
+import av
+import numpy as np
+
 MODELOS = ('tiny', 'base', 'small', 'medium', 'large-v3')
 MODELO_PADRAO = 'small'
 
@@ -28,6 +31,22 @@ FIM_DE_FRASE = ('.', '!', '?')
 # O Whisper reserva metade do seu contexto de 448 tokens para o initial_prompt e
 # descarta silenciosamente o que passar disso; o excedente é cortado por nós.
 LIMITE_TOKENS_VOCABULARIO = 224
+
+# O faster-whisper decodifica o arquivo inteiro para um array float32 de 16 kHz
+# antes de transcrever, e so entao expoe a duracao. Isso torna a duracao inutil
+# como defesa: a memoria ja foi gasta. Um Opus de 6 kbps com 2 h de audio ocupa
+# 2,7 MB em disco e 1,1 GB ao decodificar -- 170x. O teto abaixo e aplicado por
+# nos, durante a decodificacao, contando amostras.
+#
+# Custo do teto padrao: 4 h = 230,4 M amostras = 461 MB em s16 e 922 MB em
+# float32. O pico transitorio da conversao fica em ~1,4 GB. Abaixe
+# TRANSCRICAO_MAX_HORAS numa maquina apertada.
+LIMITE_HORAS_PADRAO = 4.0
+VARIAVEL_LIMITE = 'TRANSCRICAO_MAX_HORAS'
+
+# O Whisper trabalha internamente a 16 kHz mono; decodificar direto nesse
+# formato evita uma reamostragem depois.
+TAXA_WHISPER = 16000
 
 Segmento = collections.namedtuple('Segmento', 'start end text')
 
@@ -72,6 +91,89 @@ def preparar_vocabulario(vocabulario, modelo=MODELO_PADRAO):
     if ' ' in cortado:  # não termina no meio de uma palavra
         cortado = cortado.rsplit(' ', 1)[0]
     return cortado, True
+
+
+class DuracaoExcedida(ValueError):
+    """Audio mais longo que o teto configurado.
+
+    Herda de ValueError para ser capturada pelo mesmo `except` que ja trata os
+    demais erros de entrada, na CLI e na interface.
+    """
+
+
+def limite_horas():
+    """Teto de duracao em horas, configuravel por TRANSCRICAO_MAX_HORAS."""
+    bruto = os.environ.get(VARIAVEL_LIMITE)
+    if not bruto or not bruto.strip():
+        return LIMITE_HORAS_PADRAO
+    try:
+        valor = float(bruto)
+    except ValueError:
+        raise ValueError("{0} precisa ser um numero em horas; veio {1!r}".format(
+            VARIAVEL_LIMITE, bruto))
+    if valor <= 0:
+        raise ValueError("{0} precisa ser maior que zero; veio {1!r}".format(
+            VARIAVEL_LIMITE, bruto))
+    return valor
+
+
+def sondar_duracao(caminho):
+    """Duracao declarada no arquivo, em segundos, sem decodificar nada.
+
+    Custa milissegundos: le so o cabecalho do container. Devolve None quando o
+    formato nao declara duracao. O valor vem do arquivo, ou seja, de quem o
+    enviou -- serve para recusar cedo o caso obvio, nunca como unica defesa.
+    """
+    with av.open(caminho) as container:
+        if container.duration is not None:
+            return float(container.duration) / av.time_base
+        for trilha in container.streams.audio:
+            if trilha.duration is not None and trilha.time_base:
+                return float(trilha.duration * trilha.time_base)
+    return None
+
+
+def decodificar_audio(caminho, limite_segundos):
+    """Decodifica para float32 mono 16 kHz, abortando ao passar do teto.
+
+    Este e o portao que de fato fecha: conta amostras durante a decodificacao e
+    para no instante em que o teto e ultrapassado, sem depender do cabecalho.
+    Um arquivo que minta sobre a propria duracao e interrompido do mesmo jeito.
+
+    O formato de saida (float32 normalizado a partir de s16) e identico ao que
+    o faster_whisper.audio.decode_audio produz, para a transcricao nao mudar.
+    """
+    maximo = int(limite_segundos * TAXA_WHISPER)
+    resampler = av.AudioResampler(format='s16', layout='mono', rate=TAXA_WHISPER)
+    blocos = []
+    total = 0
+
+    def acumular(quadros):
+        nonlocal total
+        for convertido in quadros or []:
+            bloco = convertido.to_ndarray().reshape(-1)
+            total += bloco.shape[0]
+            if total > maximo:
+                raise DuracaoExcedida(
+                    "O audio passa do limite de {0:.1f} h. Aumente {1} ou use "
+                    "--sem-limite na linha de comando se o arquivo for seu.".format(
+                        limite_segundos / 3600.0, VARIAVEL_LIMITE))
+            blocos.append(bloco)
+
+    with av.open(caminho) as container:
+        if not container.streams.audio:
+            raise RuntimeError("O arquivo nao tem trilha de audio")
+        for quadro in container.decode(audio=0):
+            quadro.pts = None
+            acumular(resampler.resample(quadro))
+        acumular(resampler.resample(None))
+
+    if not blocos:
+        raise RuntimeError("Nao foi possivel decodificar audio do arquivo")
+
+    amostras = np.concatenate(blocos)
+    blocos.clear()  # libera os pedacos antes de alocar o float32, que e o dobro
+    return amostras.astype(np.float32) / 32768.0
 
 
 def agrupar_em_paragrafos(segmentos):
@@ -122,7 +224,7 @@ def inicio_dos_paragrafos(segmentos):
 
 
 def transcrever(caminho, text_output_path=None, idioma="pt-BR", modelo=MODELO_PADRAO,
-                progresso=None, vocabulario=None):
+                progresso=None, vocabulario=None, max_horas=None):
     """Transcreve `caminho` e devolve um Transcricao.
 
     `progresso`, quando informado, é chamado a cada segmento reconhecido como
@@ -130,9 +232,25 @@ def transcrever(caminho, text_output_path=None, idioma="pt-BR", modelo=MODELO_PA
 
     `vocabulario` semeia o reconhecimento com termos e siglas do domínio, o que
     corrige jargão que o modelo erraria por não esperar aquelas palavras.
+
+    `max_horas` sobrepõe o teto de duração; use float('inf') para não ter teto.
+    Levanta DuracaoExcedida quando o áudio passa do limite.
     """
     if not os.path.isfile(caminho):
         raise FileNotFoundError("Arquivo não encontrado: {0}".format(caminho))
+
+    limite_segundos = (limite_horas() if max_horas is None else float(max_horas)) * 3600.0
+
+    # Dois portões. A sonda recusa em milissegundos o arquivo que se declara
+    # longo demais; a decodificação contada pega o que mente no cabeçalho.
+    declarada = sondar_duracao(caminho)
+    if declarada is not None and declarada > limite_segundos:
+        raise DuracaoExcedida(
+            "O áudio tem {0:.1f} h, acima do limite de {1:.1f} h. Aumente {2} ou "
+            "use --sem-limite na linha de comando se o arquivo for seu.".format(
+                declarada / 3600.0, limite_segundos / 3600.0, VARIAVEL_LIMITE))
+
+    audio = decodificar_audio(caminho, limite_segundos)
 
     model = carregar_modelo(modelo)
     prompt, truncado = preparar_vocabulario(vocabulario, modelo)
@@ -152,8 +270,11 @@ def transcrever(caminho, text_output_path=None, idioma="pt-BR", modelo=MODELO_PA
     # se o vocabulário do domínio ajudou. Com 0.0 o segmento difícil sai pior,
     # mas sai igual toda vez, e a diferença entre duas execuções passa a ser
     # atribuível ao que mudou de fato.
+    # `audio` já vem decodificado: o faster-whisper só chama o próprio decode
+    # quando não recebe um ndarray, e info.duration é calculado a partir do
+    # array, então a duração e o progresso seguem corretos.
     segmentos_brutos, info = model.transcribe(
-        caminho,
+        audio,
         language=codigo_idioma(idioma),
         beam_size=5,
         vad_filter=True,
@@ -186,9 +307,11 @@ def transcrever(caminho, text_output_path=None, idioma="pt-BR", modelo=MODELO_PA
 
 
 def transcribe_audio_to_text(audio_path, text_output_path=None, idioma="pt-BR",
-                             modelo=MODELO_PADRAO, progresso=None, vocabulario=None):
+                             modelo=MODELO_PADRAO, progresso=None, vocabulario=None,
+                             max_horas=None):
     """Alias mantido para não quebrar importações existentes."""
-    return transcrever(audio_path, text_output_path, idioma, modelo, progresso, vocabulario)
+    return transcrever(audio_path, text_output_path, idioma, modelo, progresso,
+                       vocabulario, max_horas)
 
 
 def _mmss(segundos):
@@ -210,6 +333,11 @@ def main(argv=None):
                         help="modelo Whisper: maiores são mais precisos e mais lentos")
     parser.add_argument('-v', '--vocabulario', default=None,
                         help="termos e siglas do domínio, para o modelo acertar o jargão")
+    parser.add_argument('--max-horas', type=float, default=None, metavar='H',
+                        help="teto de duração em horas (padrão: {0:g}, ou {1})".format(
+                            LIMITE_HORAS_PADRAO, VARIAVEL_LIMITE))
+    parser.add_argument('--sem-limite', action='store_true',
+                        help="desliga o teto de duração; use só em arquivo de origem confiável")
     args = parser.parse_args(argv)
 
     def progresso(processado, total):
@@ -219,8 +347,9 @@ def main(argv=None):
                 end='', file=sys.stderr)
 
     try:
+        max_horas = float('inf') if args.sem_limite else args.max_horas
         resultado = transcrever(args.entrada, args.saida, args.idioma, args.modelo,
-                                progresso, args.vocabulario)
+                                progresso, args.vocabulario, max_horas)
     except (OSError, ValueError, RuntimeError) as erro:
         print("Erro: {0}".format(erro), file=sys.stderr)
         return 1
