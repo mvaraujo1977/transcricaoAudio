@@ -2,11 +2,15 @@
 # CSS contra as classes que o Streamlit gera quebra na próxima atualização.
 #
 # `base` fica de fora de propósito -- sem ele a tela segue o modo claro/escuro do
-# navegador, e cada modo recebe abaixo a sua variante da cor de destaque.
+# navegador, e cada modo é desenhado à mão abaixo. O escuro NÃO é conversão do
+# claro: pastel claro sobre fundo escuro ofusca, então lá o equivalente de pastel
+# é superfície pouco mais clara que o fundo, e o acento sobe em vez de descer.
+#
+# A paleta é pastel na SUPERFÍCIE, nunca no texto. Um matiz só, o verde-azulado,
+# em duas intensidades: sálvia dessaturada para fundo e selo, teal fechado para o
+# acento. Razões de contraste medidas no navegador estão no README.
 
 [theme]
-# Uma cor de destaque só (botão primário, barra de progresso, foco dos campos).
-# A variante por modo está em [theme.light] / [theme.dark].
 font = "sans-serif"
 headingFont = "sans-serif"
 # Títulos com peso 600: destacam sem pedir um tamanho de fonte a mais.
@@ -14,19 +18,48 @@ headingFontWeights = 600
 # Cantos discretos. "small" é o menor valor que ainda diferencia campo de fundo.
 baseRadius = "small"
 # Borda nos campos em vez de fundo cinza: separa o campo do resto sem sombra.
+# A cor da borda vem de borderColor, abaixo, porque a padrão do Streamlit fica em
+# 1,45:1 contra o fundo -- longe dos 3:1 que um limite de widget precisa.
 showWidgetBorder = true
 
 [theme.light]
-# Teal escuro o bastante para o texto branco do botão primário ficar legível.
+# Creme levemente quente no lugar do branco puro: é o que dá a temperatura.
+backgroundColor = "#FAF8F4"
+# Sálvia pastel nas superfícies (campos, uploader, expander, área de texto).
+secondaryBackgroundColor = "#E7EFEA"
+# Texto quase preto com um fio de verde, para casar sem perder legibilidade.
+textColor = "#1C2723"
+# Teal fechado: é a versão escura do mesmo pastel, e precisa ser profundo porque
+# o Streamlit escreve em BRANCO sobre ele no botão primário -- aqui dá 5,47:1.
 primaryColor = "#0F766E"
-# Link na mesma cor do destaque. Sem isso o Streamlit usa o azul padrão, que
-# seria uma segunda cor de destaque na tela -- o link do rodapé é o único link.
 linkColor = "#0F766E"
+# Sálvia: o par que pinta os selos e os números dos passos. O texto (grayText)
+# é escuro, porque texto não pode ser pastel; o pastel fica no fundo do selo
+# (grayBackground). Sem grayBackgroundColor o Streamlit derivaria o fundo desta
+# cor a 10%, que sai quase branco e perde o verde.
+grayColor = "#3F5B53"
+grayTextColor = "#2E443D"
+grayBackgroundColor = "#DCE8E1"
+borderColor = "#77877F"
 
 [theme.dark]
-# O mesmo teal, clareado: no fundo escuro a versão do modo claro fica apagada.
-primaryColor = "#2DD4BF"
-linkColor = "#2DD4BF"
+# Quase preto esverdeado, e a superfície só um degrau acima -- no escuro é assim
+# que "pastel" se traduz: pouco contraste entre fundo e cartão, nada de tom claro.
+backgroundColor = "#101715"
+secondaryBackgroundColor = "#1B2523"
+textColor = "#E6EDEA"
+# Mais aberto que o acento do modo claro (luminância 0,17 contra 0,15), e ainda
+# assim profundo o bastante para o branco do botão passar: 4,69:1. Subir mais o
+# tom quebraria isso -- o Streamlit escreve em branco no botão nos DOIS modos.
+primaryColor = "#178273"
+# Link não é botão: aqui o teal pode abrir de vez, e ganha contraste no escuro.
+linkColor = "#7FD8C6"
+# Sálvia clara: mesmo papel do par do modo claro, invertido -- o "pastel" aqui é
+# a superfície um degrau acima do fundo, e o texto é que fica claro.
+grayColor = "#A9C4BB"
+grayTextColor = "#BFD6CD"
+grayBackgroundColor = "#26332F"
+borderColor = "#5B7871"
 
 [client]
 # Esvazia o menu (Rerun, Clear cache, Deploy): sem nenhuma entrada sobrando, o

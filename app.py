@@ -68,6 +68,14 @@ ESTILO = """
    deixa escrever o label e o help. A linha em português logo abaixo do uploader
    diz a mesma coisa, com o limite lido de server.maxUploadSize. */
 [data-testid="stFileUploaderDropzoneInstructions"] { display: none; }
+
+/* Legenda (st.caption). O Streamlit apaga a legenda com opacity: 0.6 sobre a
+   cor do texto, e sobre o fundo creme da paleta isso cai para 4,08:1 -- abaixo
+   dos 4,5:1 que texto precisa. Não há opção de tema para essa opacidade, e
+   mexer nela em vez de fixar uma cor mantém o ajuste válido nos dois modos:
+   0,72 dá 5,92:1 no claro e 8,32:1 no escuro, e a legenda continua mais leve
+   que o corpo do texto. */
+[data-testid="stCaptionContainer"] { opacity: 0.72; }
 </style>
 """
 
@@ -352,15 +360,15 @@ def _painel_de_apresentacao():
     # linhas empurra a frase dele para baixo e desalinha a faixa inteira.
     passo_a, passo_b, passo_c = st.columns(3)
     with passo_a:
-        st.markdown("**:primary[1.] Envie o arquivo**")
+        st.markdown("**:gray[1.] Envie o arquivo**")
         st.caption("Áudio ou vídeo de aula, reunião ou entrevista. De um vídeo, "
                    "só a trilha de áudio é lida.")
     with passo_b:
-        st.markdown("**:primary[2.] Roda nesta máquina**")
+        st.markdown("**:gray[2.] Roda nesta máquina**")
         st.caption("O modelo Whisper processa o áudio localmente, sem conta, sem "
                    "chave de API e sem requisição de saída.")
     with passo_c:
-        st.markdown("**:primary[3.] Revise e baixe**")
+        st.markdown("**:gray[3.] Revise e baixe**")
         st.caption("O texto sai em parágrafos, editável na tela, e exporta em "
                    ".txt ou em .pdf com marcação de tempo.")
 
@@ -440,11 +448,18 @@ processando = st.session_state.get('processando', False)
 st.title("Transcrição de áudio")
 # A descrição e o que a diferencia ficam em texto normal, não em legenda: rodar
 # local é a informação mais importante da página e estava no tom mais apagado
-# dela. Os selos usam a cor de destaque do tema, não uma cor escrita no código.
+# dela.
+#
+# Os selos são `gray`, que no config.toml é a sálvia da paleta (escura no modo
+# claro, clara no escuro) -- e não `primary`. O texto do selo é pintado com a
+# própria cor, sobre um fundo que é ela a 10%: com o teal do botão, que precisa
+# ser profundo para o branco por cima dele passar, esse par cai para 3,16:1 no
+# modo escuro. A sálvia é definida por modo justamente para o selo, que é texto,
+# nunca ficar em tom pastel.
 st.markdown("Transcreve arquivos de áudio e vídeo em texto editável, para revisar "
             "na tela e exportar em .txt ou .pdf.")
-st.markdown(":primary-badge[Processamento local] "
-            ":primary-badge[Sem envio para a nuvem] "
+st.markdown(":gray-badge[Processamento local] "
+            ":gray-badge[Sem envio para a nuvem] "
             ":gray-badge[Modelo Whisper] "
             ":gray-badge[Português e mais 5 idiomas]")
 
