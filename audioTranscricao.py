@@ -3,6 +3,7 @@
 import argparse
 import collections
 import functools
+import math
 import os
 import sys
 
@@ -101,6 +102,13 @@ class DuracaoExcedida(ValueError):
     """
 
 
+def _duracao_legivel(segundos):
+    """Formata uma duração para mensagem de erro, sem virar '0.0 h'."""
+    if segundos < 3600:
+        return "{0:.0f} min".format(segundos / 60.0)
+    return "{0:.1f} h".format(segundos / 3600.0)
+
+
 def limite_horas():
     """Teto de duracao em horas, configuravel por TRANSCRICAO_MAX_HORAS."""
     bruto = os.environ.get(VARIAVEL_LIMITE)
@@ -143,7 +151,9 @@ def decodificar_audio(caminho, limite_segundos):
     O formato de saida (float32 normalizado a partir de s16) e identico ao que
     o faster_whisper.audio.decode_audio produz, para a transcricao nao mudar.
     """
-    maximo = int(limite_segundos * TAXA_WHISPER)
+    # --sem-limite chega aqui como infinito, que não vira int: nesse caso não há
+    # teto a comparar e a contagem serve só para saber se veio algum áudio.
+    maximo = int(limite_segundos * TAXA_WHISPER) if math.isfinite(limite_segundos) else None
     resampler = av.AudioResampler(format='s16', layout='mono', rate=TAXA_WHISPER)
     blocos = []
     total = 0
@@ -153,11 +163,11 @@ def decodificar_audio(caminho, limite_segundos):
         for convertido in quadros or []:
             bloco = convertido.to_ndarray().reshape(-1)
             total += bloco.shape[0]
-            if total > maximo:
+            if maximo is not None and total > maximo:
                 raise DuracaoExcedida(
-                    "O audio passa do limite de {0:.1f} h. Aumente {1} ou use "
+                    "O áudio passa do limite de {0}. Aumente {1} ou use "
                     "--sem-limite na linha de comando se o arquivo for seu.".format(
-                        limite_segundos / 3600.0, VARIAVEL_LIMITE))
+                        _duracao_legivel(limite_segundos), VARIAVEL_LIMITE))
             blocos.append(bloco)
 
     with av.open(caminho) as container:
@@ -246,9 +256,10 @@ def transcrever(caminho, text_output_path=None, idioma="pt-BR", modelo=MODELO_PA
     declarada = sondar_duracao(caminho)
     if declarada is not None and declarada > limite_segundos:
         raise DuracaoExcedida(
-            "O áudio tem {0:.1f} h, acima do limite de {1:.1f} h. Aumente {2} ou "
-            "use --sem-limite na linha de comando se o arquivo for seu.".format(
-                declarada / 3600.0, limite_segundos / 3600.0, VARIAVEL_LIMITE))
+            "O áudio tem {0}, acima do limite de {1}. Aumente {2} ou use "
+            "--sem-limite na linha de comando se o arquivo for seu.".format(
+                _duracao_legivel(declarada), _duracao_legivel(limite_segundos),
+                VARIAVEL_LIMITE))
 
     audio = decodificar_audio(caminho, limite_segundos)
 
