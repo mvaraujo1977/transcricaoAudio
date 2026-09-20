@@ -1,0 +1,26 @@
+# Dependências da demo no Hugging Face Spaces (SDK Gradio, sem Docker).
+#
+# Versões fixadas: o Space reconstrói o ambiente a cada push, e sem pino uma
+# atualização de terceiro entraria sozinha numa página pública.
+#
+# O `gradio` repete a versão declarada em sdk_version no README.md do Space --
+# se as duas divergirem, o build usa uma e o código foi escrito para a outra.
+#
+# Streamlit NÃO entra: a tela de lá é o app_gradio.py. O app.py (Streamlit)
+# continua sendo a versão local, instalada pelo requirements.txt da raiz.
+
+gradio==6.28.0
+
+# Motor de reconhecimento e o runtime que o executa em CPU.
+faster-whisper==1.2.1
+ctranslate2==4.8.2
+
+# Decodificação de mídia (traz os próprios codecs do FFmpeg).
+av==18.1.0
+
+# numpy é usado direto por audioTranscricao.py (o array float32 16 kHz), não só
+# como dependência transitiva -- por isso está pinado aqui.
+numpy==2.5.3
+
+# PDF da transcrição revisada.
+reportlab==5.0.1
