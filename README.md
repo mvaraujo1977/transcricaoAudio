@@ -147,12 +147,19 @@ domínio saírem errados, subir de `small` para `medium` costuma resolver.
 ## Decisões técnicas
 
 **Reconhecimento local em vez da API do Google.** A primeira versão usava o
-Google Speech Recognition e devolvia texto corrido, sem pontuação. Medido na
-mesma aula de 37 minutos, com o `verificar_transcricao.py`: **2 pontos finais e
-nenhuma vírgula** em 4.979 palavras, contra **339 pontos e 418 vírgulas** do
-faster-whisper. Um bloco de texto sem pontuação é inútil para consulta — não dá
-para achar um trecho nem para ler em diagonal. Junto vieram capitalização,
-timestamps por segmento e a independência de rede e de serviço externo.
+Google Speech Recognition e devolvia texto corrido, sem pontuação. Os dois
+motores transcreveram a **mesma aula de 37 minutos**, medida com o
+`verificar_transcricao.py`. Em densidade, que é o que permite comparar textos de
+tamanhos diferentes:
+
+| Motor | Pontos finais / mil palavras | Vírgulas / mil palavras | Medido em |
+|---|---|---|---|
+| Google Speech Recognition | **0,4** | **0** | 2 e 0 em 4.979 palavras |
+| faster-whisper (`small`) | **66,6** | **82,3** | 338 e 418 em 5.078 palavras |
+
+Um bloco de texto sem pontuação é inútil para consulta — não dá para achar um
+trecho nem para ler em diagonal. Junto vieram capitalização, timestamps por
+segmento e a independência de rede e de serviço externo.
 
 **`temperature=0.0`, para a transcrição ser reprodutível.** O padrão do
 faster-whisper reprocessa com amostragem (temperatura de 0,0 a 1,0) os segmentos
