@@ -24,6 +24,33 @@ docker compose logs -f
 docker compose down
 ```
 
+### Acesso pela rede
+
+A porta é publicada em `127.0.0.1:8501:8501`, ou seja, **a tela só abre na própria
+máquina**. Isso é deliberado: a aplicação não tem autenticação nenhuma, e sem o
+prefixo `127.0.0.1` o Docker escuta em todas as interfaces — em wifi de café ou de
+hotel, qualquer um no mesmo segmento abriria a interface, enviaria arquivos e
+consumiria a CPU da máquina.
+
+Para alcançar a tela de outro aparelho da LAN, troque em `docker-compose.yml`:
+
+```yaml
+    ports:
+      - "8501:8501"      # escuta em todas as interfaces
+```
+
+Faça isso apenas em rede confiável e sabendo que **não há login**: quem alcança a
+porta tem acesso completo. Para uso legítimo fora da máquina, o caminho seguro é um
+túnel SSH, que dispensa expor a porta:
+
+```bash
+ssh -L 8501:127.0.0.1:8501 usuario@maquina
+```
+
+O `--server.address=0.0.0.0` do `Dockerfile` é outra coisa e deve continuar como
+está: ele é o bind *dentro* do container, sem o qual o mapeamento de porta não
+funciona. Quem controla a exposição no host é só a linha `ports`.
+
 O modelo `small` já vem embutido na imagem, então a primeira transcrição não
 espera download nenhum e o container funciona sem rede. O limite de upload é de
 1 GB (o padrão do Streamlit, 200 MB, não cobre um vídeo de reunião longa).

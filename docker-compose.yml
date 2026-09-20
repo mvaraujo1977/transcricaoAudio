@@ -3,7 +3,10 @@ services:
     build: .
     container_name: transcricao
     ports:
-      - "8501:8501"
+      # 127.0.0.1 publica a porta so no loopback. Sem o prefixo, o Docker escuta
+      # em todas as interfaces e qualquer um na mesma rede (wifi de cafe, de
+      # hotel) abre a aplicacao, que nao tem autenticacao nenhuma.
+      - "127.0.0.1:8501:8501"
     volumes:
       # Arquivos largados em ./dados ficam visíveis para a CLI dentro do container.
       - ./dados:/app/dados
