@@ -6,10 +6,12 @@ GitHub é a apresentação do projeto. Os dois vivem neste repositório --
 `README.md` na raiz e `deploy/space/README.md` -- e este script monta a árvore
 que o Space recebe, sem duplicar conteúdo.
 
-Sobe só o necessário para a demo rodar: a tela Gradio, o motor, o gerador de PDF,
-o áudio de exemplo, a licença, e o README e o requirements.txt específicos do
-Space. Fica de fora o que é do repositório e não do Space -- app.py (Streamlit),
-Dockerfile, docs/, testes, dados/.
+O Space roda com SDK Docker: é a MESMA imagem da instalação local, com o modelo
+embutido e os limites de demo aplicados pelo entrypoint quando SPACE_ID existe.
+Sobe o necessário para o build acontecer lá -- Dockerfile, entrypoint, lockfile,
+a tela Streamlit, o motor, o gerador de PDF, o tema, o áudio de exemplo e a
+licença --, mais o README com o frontmatter que o Spaces exige. Fica de fora o
+que é do repositório e não do Space: docs/, verificadores, dados/.
 
 Uso:
     python deploy/publicar_space.py                  # publica
@@ -31,15 +33,21 @@ SPACE_PADRAO = 'mvaraujo1977/transcricao-audio'
 
 # origem no repositório -> caminho no Space
 ARQUIVOS = {
-    'app_gradio.py': 'app_gradio.py',
+    'Dockerfile': 'Dockerfile',
+    'entrypoint.sh': 'entrypoint.sh',
+    'requirements.lock.txt': 'requirements.lock.txt',
+    'app.py': 'app.py',
+    '.streamlit/config.toml': '.streamlit/config.toml',
     'audioTranscricao.py': 'audioTranscricao.py',
     'gerar_pdf.py': 'gerar_pdf.py',
     'LICENSE': 'LICENSE',
     'exemplos/exemplo-o-alienista.mp3': 'exemplos/exemplo-o-alienista.mp3',
     'exemplos/CREDITOS.md': 'exemplos/CREDITOS.md',
     'deploy/space/README.md': 'README.md',
-    'deploy/space/requirements.txt': 'requirements.txt',
 }
+
+# Restos da fase Gradio, que o Space precisa perder na migração para Docker.
+APAGAR_NO_SPACE = ['app_gradio.py', 'requirements.txt']
 
 
 def montar(destino):
@@ -88,8 +96,9 @@ def main():
             repo_type='space',
             commit_message=args.mensagem,
             # Apaga do Space o que saiu daqui, para o repositório de lá não
-            # acumular restos de publicações anteriores.
-            delete_patterns=['*.py', '*.txt', '*.md', 'exemplos/*'],
+            # acumular restos de publicações anteriores -- incluindo os arquivos
+            # da fase Gradio, que o SDK Docker não usa.
+            delete_patterns=['*.py', '*.txt', '*.md', 'exemplos/*'] + APAGAR_NO_SPACE,
         )
         print("publicado: {0}".format(url))
         print("acompanhe o build em: https://huggingface.co/spaces/{0}".format(args.space))

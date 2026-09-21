@@ -190,14 +190,13 @@ chamam a mesma `transcrever()` de `audioTranscricao.py`: nenhuma reimplementa
 decodificação, teto de duração ou pós-processamento. O que muda entre as duas
 instalações sai de variável de ambiente, não de código duplicado.
 
-**A demo carrega uma exigência da plataforma, não do projeto.** O Space roda em
-hardware **ZeroGPU**, que recusa subir sem enxergar uma função `@spaces.GPU` na
-inicialização (`No @spaces.GPU function detected during startup`) — mesmo quando
-a aplicação não quer GPU alguma, como é o caso: o motor é CTranslate2, que o
-ZeroGPU não acelera. Por isso `app_gradio.py` declara uma função decorada que
-nunca é chamada, e `spaces` está no `requirements.txt` do Space. Trocar o
-hardware para CPU básica resolveria, mas a Hugging Face não permite esse
-downgrade sem assinatura PRO. O caso está detalhado, com o que foi tentado, em
+**A demo roda a mesma imagem, não uma versão paralela.** O Space usa SDK Docker e
+constrói o `Dockerfile` deste repositório; o que muda lá — modelo `base`, teto de
+5 minutos, upload de 50 MB — sai do `entrypoint.sh` quando a variável `SPACE_ID`
+existe, não de código duplicado. Houve um desvio no meio do caminho: no plano
+gratuito o SDK Docker não era oferecido, a demo nasceu como uma segunda tela em
+Gradio e o hardware ZeroGPU exigia uma função `@spaces.GPU` que a aplicação não
+tinha por que ter. Esse episódio, com os erros e as tentativas, está em
 [docs/DEPLOY.md](docs/DEPLOY.md).
 
 **Reconhecimento local em vez da API do Google.** A primeira versão usava o
@@ -282,8 +281,7 @@ em **[docs/SEGURANCA.md](docs/SEGURANCA.md)**. Em resumo:
 
 | Arquivo | Papel |
 |---|---|
-| `app.py` | interface Streamlit (versão local) |
-| `app_gradio.py` | interface Gradio (a demo pública); mesma função `transcrever` |
+| `app.py` | interface Streamlit (local e demo pública) |
 | `audioTranscricao.py` | motor de transcrição e CLI |
 | `gerar_pdf.py` | exportação do texto revisado em PDF |
 | `.streamlit/config.toml` | tema da interface (paleta, fonte, bordas) |

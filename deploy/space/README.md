@@ -3,15 +3,11 @@ title: Transcrição de Áudio
 emoji: 🎙️
 colorFrom: green
 colorTo: gray
-sdk: gradio
-sdk_version: 6.28.0
-python_version: '3.12'
-app_file: app_gradio.py
+sdk: docker
+app_port: 8501
 pinned: false
 license: mit
 short_description: Transcreve áudio e vídeo em texto, com Whisper, sem nuvem
-preload_from_hub:
-  - Systran/faster-whisper-base
 ---
 
 # Transcrição de áudio
@@ -29,7 +25,7 @@ modelo Whisper (via `faster-whisper`), exportando em `.txt` e `.pdf`.
   cerca de um minuto para acordar.
 
 O reconhecimento roda na CPU deste Space — nenhum arquivo é enviado para outro
-serviço.
+serviço. A imagem é a mesma que o projeto usa localmente, com o modelo embutido.
 
 Código, decisões técnicas e auditoria de segurança:
 [github.com/mvaraujo1977/transcricaoAudio](https://github.com/mvaraujo1977/transcricaoAudio)
