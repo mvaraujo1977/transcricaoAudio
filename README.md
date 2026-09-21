@@ -224,6 +224,8 @@ servidor são melhores. Vale como aviso: **extrapolar desempenho da sua máquina
 para o servidor erra feio**. A estimativa inicial para os 20 minutos, feita
 assim, errou por cerca de 5x — o número acima é medição, não conta.
 
+*Precisa disso rodando na sua máquina, adaptado ao vocabulário do seu domínio? [LinkedIn](https://linkedin.com/in/marcelovaraujo) · marcelovianadearaujo@gmail.com*
+
 ## Decisões técnicas
 
 **A demo roda a mesma imagem, não uma versão paralela.** O Space usa SDK Docker e

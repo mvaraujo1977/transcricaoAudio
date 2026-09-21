@@ -46,6 +46,11 @@ CAMINHO_EXEMPLO = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                'exemplos', 'exemplo-o-alienista.mp3')
 NOME_EXEMPLO = 'exemplo-o-alienista.mp3'
 
+# Contato do rodapé. O repositório fica em URL_PROJETO, no motor, porque a
+# mensagem de limite da demo também o usa; estes dois só a tela usa.
+URL_LINKEDIN = 'https://linkedin.com/in/marcelovaraujo'
+EMAIL_CONTATO = 'marcelovianadearaujo@gmail.com'
+
 # Tamanho aproximado do download de cada modelo, para avisar antes da espera.
 TAMANHO_MODELO = {
     'tiny': '~75 MB',
@@ -717,3 +722,15 @@ st.divider()
 # demo: dois lugares apontando para o repositório, um valor só.
 st.caption("Projeto pessoal — código em [{0}]({1}).".format(
     URL_PROJETO.split('//')[-1], URL_PROJETO))
+
+# Contato, no rodapé e em legenda -- o mesmo tom apagado do resto daqui. Fica
+# longe do topo de propósito: lá em cima o espaço é do aviso de
+# confidencialidade, e emendar uma oferta de trabalho num aviso desses
+# enfraquece os dois.
+#
+# Aparece SEMPRE, local e demo, ao contrário dos textos de limite: quem rodou o
+# projeto na própria máquina e quer adaptá-lo ao vocabulário do domínio dele é
+# justamente quem tem motivo para escrever.
+st.caption("Precisa disso rodando na sua máquina, adaptado ao vocabulário do seu "
+           "domínio? [LinkedIn]({0}) · [{1}](mailto:{1})".format(
+               URL_LINKEDIN, EMAIL_CONTATO))

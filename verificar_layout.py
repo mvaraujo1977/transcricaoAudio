@@ -234,6 +234,14 @@ def main():
              "fora da demo nao ha ressalva de servidor publico: seria mentira")
     conferir("github.com/mvaraujo1977/transcricaoAudio" in legendas,
              "rodape com link para o repositorio")
+    # O contato vale nos DOIS modos, ao contrario dos textos de limite e da
+    # ressalva de confidencialidade, que so a demo mostra. A versao da demo e
+    # conferida no bloco LIMITES DA DEMO.
+    conferir("linkedin.com/in/marcelovaraujo" in legendas
+             and "marcelovianadearaujo@gmail.com" in legendas,
+             "linha de contato no rodape, fora da demo")
+    conferir("Precisa disso" not in " ".join(m.value for m in vazio.markdown),
+             "o contato fica so no rodape, longe do topo")
 
     print("ESTADO RESULTADO (pos-transcricao)")
     pronto = estado_com_resultado()
@@ -453,6 +461,9 @@ def main():
                  "a tela anuncia o teto de duracao da demo")
         conferir("medium" not in legendas_demo and "large-v3" not in legendas_demo,
                  "a legenda nao manda procurar modelo que nao esta no seletor")
+        conferir("linkedin.com/in/marcelovaraujo" in legendas_demo
+                 and "marcelovianadearaujo@gmail.com" in legendas_demo,
+                 "a linha de contato aparece tambem na demo")
 
         # A mensagem do teto de duracao e o que o visitante le ao esbarrar nele:
         # falar de variavel de ambiente e --sem-limite ali e um beco sem saida.

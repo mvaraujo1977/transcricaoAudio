@@ -68,3 +68,5 @@ para isso, rode na sua máquina.
 
 Código, decisões técnicas e auditoria de segurança:
 [github.com/mvaraujo1977/transcricaoAudio](https://github.com/mvaraujo1977/transcricaoAudio)
+
+*Precisa disso rodando na sua máquina, adaptado ao vocabulário do seu domínio? [LinkedIn](https://linkedin.com/in/marcelovaraujo) · marcelovianadearaujo@gmail.com*
