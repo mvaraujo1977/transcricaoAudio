@@ -10,8 +10,9 @@ import streamlit as st
 
 from audioTranscricao import (FASE_ANALISE, FASE_PREPARO, FASE_TRANSCRICAO,
                               LIMITE_TOKENS_VOCABULARIO, MODELOS, URL_PROJETO,
-                              agrupar_em_paragrafos, inicio_dos_paragrafos,
-                              limite_horas, modelo_padrao, modelos_disponiveis,
+                              agrupar_em_paragrafos, em_demo,
+                              inicio_dos_paragrafos, limite_horas,
+                              modelo_padrao, modelos_disponiveis,
                               preparar_vocabulario, transcrever)
 from gerar_pdf import transcricao_para_pdf
 
@@ -484,10 +485,18 @@ def _painel_de_apresentacao():
         st.caption("Áudio ou vídeo de aula, reunião ou entrevista. De um vídeo, "
                    "só a trilha de áudio é lida.")
     with passo_b:
-        st.markdown("**:gray[2.] Roda nesta máquina**")
-        st.caption("O modelo Whisper processa o áudio localmente, sem conta, sem "
-                   "chave de API e sem requisição de saída.")
-
+        # Mesmo cuidado dos selos: "nesta máquina" é lido como "no meu
+        # computador", e na demo isso é falso. O que não muda entre os dois casos
+        # -- e é o que a ferramenta de fato promete -- é a ausência de terceiro.
+        if em_demo():
+            st.markdown("**:gray[2.] Roda no servidor da demo**")
+            st.caption("O modelo Whisper processa o áudio aqui mesmo, sem conta, "
+                       "sem chave de API e sem requisição de saída. Rodando local, "
+                       "esse servidor é a sua máquina.")
+        else:
+            st.markdown("**:gray[2.] Roda nesta máquina**")
+            st.caption("O modelo Whisper processa o áudio localmente, sem conta, "
+                       "sem chave de API e sem requisição de saída.")
     with passo_c:
         st.markdown("**:gray[3.] Revise e baixe**")
         st.caption("O texto sai em parágrafos, editável na tela, e exporta em "
@@ -587,10 +596,37 @@ st.title("Transcrição de áudio")
 # nunca ficar em tom pastel.
 st.markdown("Transcreve arquivos de áudio e vídeo em texto editável, para revisar "
             "na tela e exportar em .txt ou .pdf.")
-st.markdown(":gray-badge[Processamento local] "
-            ":gray-badge[Sem envio para a nuvem] "
-            ":gray-badge[Modelo Whisper] "
-            ":gray-badge[Português e mais 5 idiomas]")
+# Dois dos selos só são verdade fora da demo. "Sem envio para a nuvem" é
+# literalmente falso num Space público -- o arquivo sobe para o servidor do
+# Hugging Face --, e "Processamento local" é lido por qualquer visitante como "no
+# meu computador". Anunciar isso na mesma tela que pede um arquivo, logo acima do
+# aviso de não mandar material sigiloso, seria a página se contradizendo.
+selos = [":gray-badge[Sem API de terceiros]",
+         ":gray-badge[Modelo Whisper]",
+         ":gray-badge[Português e mais 5 idiomas]"]
+if not em_demo():
+    selos = [":gray-badge[Processamento local]",
+             ":gray-badge[Sem envio para a nuvem]"] + selos
+st.markdown(" ".join(selos))
+
+# Para quem a ferramenta serve, logo abaixo dos selos. Quem chega por um link não
+# sabe o que a distingue de qualquer transcritor online, e a distinção é uma só:
+# o áudio não passa por serviço de terceiro. A frase evita dizer "na sua máquina"
+# de propósito -- na demo não é, e é exatamente aí que a promessa poderia virar
+# armadilha.
+st.markdown("Feito para material que não pode ir para a nuvem — audiência, sessão "
+            "clínica, reunião interna, entrevista. O áudio é processado pelo modelo "
+            "na própria máquina que roda a aplicação, sem chamada a nenhuma API de "
+            "terceiros.")
+
+if em_demo():
+    # Esta ressalva não é opcional: sem ela, o parágrafo acima vira convite para
+    # alguém subir material sigiloso num servidor público. Fica em st.warning, e
+    # não em texto corrido, porque precisa ser lida antes do upload, não depois.
+    st.warning("**Nesta demo pública, essa máquina é o servidor do Hugging Face — "
+               "não o seu computador. Não envie material confidencial aqui.** Para "
+               "ter a garantia de verdade, rode o projeto na sua máquina com "
+               "Docker: [{0}]({1}).".format(URL_PROJETO.split('//')[-1], URL_PROJETO))
 
 upload, idioma, modelo, vocabulario, clicou, exemplo = _painel_de_entrada(
     processando, mostrar_exemplo='texto_editado' not in st.session_state)

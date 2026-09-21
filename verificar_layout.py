@@ -223,6 +223,15 @@ def main():
              "instrucoes do uploader em portugues, com os dois tetos")
     conferir("medium" in legendas and "large-v3" in legendas,
              "sem restricao, a legenda dos modelos cita os grandes")
+    conferir("Feito para material que não pode ir para a nuvem" in marcacoes,
+             "bloco de para-quem-serve, logo abaixo dos selos")
+    conferir("Sem API de terceiros" in marcacoes,
+             "selo 'Sem API de terceiros' entre os demais")
+    conferir("Processamento local" in marcacoes
+             and "Sem envio para a nuvem" in marcacoes,
+             "fora da demo, os dois selos fortes continuam -- e ai sao verdade")
+    conferir(not vazio.warning,
+             "fora da demo nao ha ressalva de servidor publico: seria mentira")
     conferir("github.com/mvaraujo1977/transcricaoAudio" in legendas,
              "rodape com link para o repositorio")
 
@@ -412,6 +421,32 @@ def main():
         conferir(list(seletor.options) == ['base', 'small'],
                  "seletor restrito a base e small, do mais leve ao mais pesado")
         conferir(seletor.value == 'base', "base vem pre-selecionado")
+
+        # A ressalva de confidencialidade e o item que NAO pode sumir por
+        # acidente: sem ela, a tela convida a subir material sigiloso para um
+        # servidor publico. Por isso e conferida pelo conteudo, nao so pela
+        # presenca de algum aviso.
+        avisos = " ".join(a.value for a in demo.warning)
+        conferir(bool(demo.warning), "a demo mostra a ressalva de confidencialidade")
+        conferir("não envie material confidencial" in avisos.lower(),
+                 "a ressalva diz, com todas as letras, para nao enviar sigiloso")
+        conferir("Hugging Face" in avisos,
+                 "a ressalva nomeia de quem e a maquina que processa")
+        conferir(audioTranscricao.URL_PROJETO in avisos,
+                 "a ressalva aponta onde rodar local para ter a garantia")
+
+        marcacoes_demo = " ".join(m.value for m in demo.markdown)
+        conferir("Feito para material que não pode ir para a nuvem" in marcacoes_demo,
+                 "o bloco de para-quem-serve aparece tambem na demo")
+        conferir("Sem envio para a nuvem" not in marcacoes_demo,
+                 "o selo 'Sem envio para a nuvem' sai da demo: la e falso")
+        conferir("Processamento local" not in marcacoes_demo,
+                 "o selo 'Processamento local' sai da demo: seria lido como "
+                 "'no meu computador'")
+        conferir("Sem API de terceiros" in marcacoes_demo,
+                 "o selo que vale nos dois casos fica")
+        conferir("Roda no servidor da demo" in marcacoes_demo,
+                 "o passo 2 nao promete 'nesta maquina' numa pagina publica")
 
         legendas_demo = " ".join(c.value for c in demo.caption)
         conferir("20 minutos de áudio" in legendas_demo,

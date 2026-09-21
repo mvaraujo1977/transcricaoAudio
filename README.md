@@ -12,13 +12,27 @@ revisão na tela e exportação em `.txt` e `.pdf`.
 
 ![Tela da aplicação com uma transcrição pronta: métricas de duração, idioma, segmentos e palavras, o texto editável e os dois botões de download](docs/tela.png)
 
+## Para quem serve
+
+Feito para material que **não pode ir para a nuvem** — audiência, sessão clínica,
+reunião interna, entrevista. O áudio é processado pelo modelo na própria máquina
+que roda a aplicação, sem chamada a nenhuma API de terceiros: não há conta, não
+há chave, não há requisição de saída. O arquivo entra, o texto sai, e nada no
+meio do caminho pertence a outra empresa.
+
+> **A demo pública é a exceção, e vale dizer com clareza:** lá a "própria
+> máquina" é o servidor do Hugging Face, não o seu computador. **Não envie
+> material confidencial para a demo.** Ela existe para você ver a ferramenta
+> funcionando antes de instalar. Para ter a garantia de verdade, rode local com
+> Docker — são os dois comandos da seção [Como rodar](#com-docker-mais-fácil).
+
 ## O que faz
 
 - **Aceita áudio e vídeo** em 10 formatos: `mp3`, `wav`, `m4a`, `ogg`, `flac`,
   `aiff`, `mp4`, `mkv`, `avi`, `mov`. De um vídeo, só a trilha de áudio é lida.
-- **Transcreve localmente**, com o Whisper via `faster-whisper`. Nenhum arquivo
-  sai da máquina: não há conta, chave de API nem requisição de saída, e o modelo
-  vem embutido na imagem Docker.
+- **Transcreve com o Whisper**, via `faster-whisper`, sem serviço externo: o
+  modelo vem embutido na imagem Docker e roda na máquina que hospeda a aplicação
+  (veja [Para quem serve](#para-quem-serve)).
 - **Transcreve, não traduz.** O texto sai no idioma falado no áudio. A lista de
   idiomas serve para dizer ao modelo o que esperar, não para converter de um
   idioma a outro: são 7 opções cobrindo 6 idiomas — português (Brasil e
