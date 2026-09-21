@@ -3,13 +3,11 @@
 Transcreve arquivos de áudio e vídeo para texto **na própria máquina**, com
 revisão na tela e exportação em `.txt` e `.pdf`.
 
-**[Demo ao vivo](https://huggingface.co/spaces/mvaraujo1977/transcricao-audio)**
-· [Código](https://github.com/mvaraujo1977/transcricaoAudio)
-
-> A demo roda no Hugging Face Spaces e **hiberna depois de um tempo sem uso**: a
-> primeira visita pode levar cerca de um minuto para acordar — não está quebrada.
-> Lá os limites são menores que os locais (5 min de áudio, 50 MB, modelo `base`),
-> porque a CPU é compartilhada. Sem arquivo à mão, o botão **Testar com exemplo**
+> A demo roda no [Hugging Face Spaces](https://huggingface.co/spaces/mvaraujo1977/transcricao-audio)
+> e **hiberna após 48 horas sem uso** — se estiver dormindo, a primeira
+> visita leva alguns segundos para acordar. Lá os limites são menores que
+> os locais (5 min de áudio, 50 MB, modelo `base`), porque a CPU é
+> compartilhada. Sem arquivo à mão, o botão **Testar com exemplo**
 > transcreve um clipe de 24 s em domínio público.
 
 ![Tela da aplicação com uma transcrição pronta: métricas de duração, idioma, segmentos e palavras, o texto editável e os dois botões de download](docs/tela.png)

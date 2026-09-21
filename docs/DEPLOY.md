@@ -82,9 +82,18 @@ foi para CPU básica e a demo passou a ser a imagem do projeto. O shim
 - **Disco efêmero**: o modelo tem de estar na imagem, não ser baixado em
   execução. Na fase Gradio isso era feito com `preload_from_hub` no frontmatter;
   com Docker, é o `RUN` do Dockerfile que baixa `small` e `base` no build.
-- **Hibernação**: o Space dorme depois de um tempo sem uso, e a primeira visita
-  seguinte espera o retorno (cerca de um minuto). O README avisa isso junto do
-  link, para quem clica não achar que quebrou.
+- **Hibernação: 48 horas, e isso vem do hardware, não do plano.** A
+  documentação da Hugging Face é explícita: *"If your Space runs on the default
+  `cpu-basic` hardware, it will go to sleep if inactive for more than a set time
+  (currently, 48 hours). Anyone visiting your Space will restart it
+  automatically. If you want your Space never to deactivate or if you want to
+  set a custom sleep time, you need to upgrade to paid hardware."* Ou seja: a
+  conta PRO **não** muda esse prazo — quem quiser Space sempre acordado, ou um
+  tempo de hibernação customizado, precisa de hardware pago (CPU Upgrade ou GPU),
+  que é cobrado por hora. No `cpu-basic` as 48 horas são fixas.
+  Acordar custa **segundos**, não minutos: com SDK Docker, acordar é reiniciar o
+  container de uma imagem já construída, e o modelo vem embutido nela — não há
+  build nem download no caminho.
 - **UID 1000**: o Spaces roda o container com esse usuário. O `Dockerfile` já
   criava um usuário não-root por outro motivo (segurança), e ele nasce com UID
   1000 — não foi preciso mudar nada.
