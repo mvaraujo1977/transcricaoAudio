@@ -64,8 +64,10 @@ MAX_UPLOAD_MB = int(os.environ.get('TRANSCRICAO_MAX_UPLOAD_MB', 50 if NA_DEMO el
 # chamada, não consome cota, e a transcrição continua inteira na CPU, porque o
 # motor é CTranslate2 e o ZeroGPU só acelera PyTorch.
 #
-# Some junto com o ZeroGPU: trocando o hardware do Space para CPU básica, este
-# bloco e a dependência `spaces` podem ser removidos sem tocar em mais nada.
+# Remover este bloco depende de o Space sair do ZeroGPU, o que hoje exige conta
+# PRO: a Hugging Face recusa o downgrade de ZeroGPU para CPU básica sem ela.
+# Enquanto isso não mudar, o bloco e a dependência `spaces` ficam. O caso, com o
+# que foi tentado, está em docs/DEPLOY.md.
 if NA_DEMO:
     try:
         import spaces
