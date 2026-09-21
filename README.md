@@ -3,6 +3,15 @@
 Transcreve arquivos de áudio e vídeo para texto **na própria máquina**, com
 revisão na tela e exportação em `.txt` e `.pdf`.
 
+**[Demo ao vivo](https://huggingface.co/spaces/mvaraujo1977/transcricao-audio)**
+· [Código](https://github.com/mvaraujo1977/transcricaoAudio)
+
+> A demo roda no plano gratuito do Hugging Face Spaces e **hiberna depois de um
+> tempo sem uso**: a primeira visita pode levar cerca de um minuto para acordar —
+> não está quebrada. Lá os limites são menores que os locais (5 min de áudio,
+> 50 MB, modelo `base`), porque a CPU é compartilhada. Sem arquivo à mão, o botão
+> **Testar com exemplo** transcreve um clipe de 24 s em domínio público.
+
 ![Tela da aplicação com uma transcrição pronta: métricas de duração, idioma, segmentos e palavras, o texto editável e os dois botões de download](docs/tela.png)
 
 ## O que faz
@@ -51,6 +60,11 @@ processo, não em tempo real:
 | **Docker + Docker Compose** | empacotamento com o modelo já dentro da imagem, porta publicada só no loopback e um comando para subir |
 
 ## Como rodar
+
+### Sem instalar nada
+
+A [demo pública](https://huggingface.co/spaces/mvaraujo1977/transcricao-audio)
+roda a mesma transcrição, com os limites de demo descritos acima.
 
 ### Com Docker (mais fácil)
 
@@ -169,6 +183,13 @@ domínio saírem errados, subir de `small` para `medium` costuma resolver.
 
 ## Decisões técnicas
 
+**Duas telas, um motor.** A versão local é o `app.py` (Streamlit) e a demo
+pública é o `app_gradio.py` (Gradio) — porque a conta gratuita do Spaces não
+libera o SDK Docker, que é como a imagem deste repositório roda. As duas telas
+chamam a mesma `transcrever()` de `audioTranscricao.py`: nenhuma reimplementa
+decodificação, teto de duração ou pós-processamento. O que muda entre as duas
+instalações sai de variável de ambiente, não de código duplicado.
+
 **Reconhecimento local em vez da API do Google.** A primeira versão usava o
 Google Speech Recognition e devolvia texto corrido, sem pontuação. Os dois
 motores transcreveram a **mesma aula de 37 minutos**, medida com o
@@ -251,13 +272,16 @@ em **[docs/SEGURANCA.md](docs/SEGURANCA.md)**. Em resumo:
 
 | Arquivo | Papel |
 |---|---|
-| `app.py` | interface Streamlit |
+| `app.py` | interface Streamlit (versão local) |
+| `app_gradio.py` | interface Gradio (a demo pública); mesma função `transcrever` |
 | `audioTranscricao.py` | motor de transcrição e CLI |
 | `gerar_pdf.py` | exportação do texto revisado em PDF |
 | `.streamlit/config.toml` | tema da interface (paleta, fonte, bordas) |
 | `verificar_transcricao.py` | métricas de qualidade de uma transcrição (pontuação, jargão, repetição em loop) |
 | `verificar_layout.py` | carrega a tela nos três estados e no cancelamento, com o AppTest |
 | `Dockerfile`, `docker-compose.yml` | imagem com o modelo embutido e porta em loopback |
+| `exemplos/` | áudio de exemplo em domínio público e seus [créditos](exemplos/CREDITOS.md) |
+| `deploy/` | README e dependências do Space, e o script que publica a demo |
 | `docs/` | [segurança](docs/SEGURANCA.md) e [interface](docs/INTERFACE.md) em detalhe |
 
 ## Licença

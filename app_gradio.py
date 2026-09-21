@@ -57,6 +57,26 @@ if NA_DEMO:
 
 MAX_UPLOAD_MB = int(os.environ.get('TRANSCRICAO_MAX_UPLOAD_MB', 50 if NA_DEMO else 256))
 
+# Exigência do hardware ZeroGPU, não do projeto. O Space recusou subir com
+# "No @spaces.GPU function detected during startup": a plataforma verifica, na
+# inicialização, que existe ao menos uma função decorada -- mesmo que a
+# aplicação nunca peça GPU. A função abaixo existe só para essa checagem: não é
+# chamada, não consome cota, e a transcrição continua inteira na CPU, porque o
+# motor é CTranslate2 e o ZeroGPU só acelera PyTorch.
+#
+# Some junto com o ZeroGPU: trocando o hardware do Space para CPU básica, este
+# bloco e a dependência `spaces` podem ser removidos sem tocar em mais nada.
+if NA_DEMO:
+    try:
+        import spaces
+
+        @spaces.GPU(duration=1)
+        def _exigido_pelo_zerogpu():
+            """Nunca chamada; ver o comentário acima."""
+            return None
+    except ImportError:
+        pass
+
 
 def _minutos_do_teto():
     """Teto de duração em minutos, para escrever na tela."""

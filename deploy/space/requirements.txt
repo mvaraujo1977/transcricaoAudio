@@ -11,6 +11,12 @@
 
 gradio==6.28.0
 
+# Exigido pelo hardware ZeroGPU do Space, nao pelo projeto: ele recusa subir sem
+# enxergar uma funcao @spaces.GPU na inicializacao. A transcricao roda na CPU.
+# Trocando o hardware para CPU basica, esta linha e o bloco correspondente em
+# app_gradio.py saem juntos.
+spaces
+
 # Motor de reconhecimento e o runtime que o executa em CPU.
 faster-whisper==1.2.1
 ctranslate2==4.8.2
