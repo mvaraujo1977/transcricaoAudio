@@ -6,11 +6,11 @@ revisão na tela e exportação em `.txt` e `.pdf`.
 **[Demo ao vivo](https://huggingface.co/spaces/mvaraujo1977/transcricao-audio)**
 · [Código](https://github.com/mvaraujo1977/transcricaoAudio)
 
-> A demo roda no plano gratuito do Hugging Face Spaces e **hiberna depois de um
-> tempo sem uso**: a primeira visita pode levar cerca de um minuto para acordar —
-> não está quebrada. Lá os limites são menores que os locais (5 min de áudio,
-> 50 MB, modelo `base`), porque a CPU é compartilhada. Sem arquivo à mão, o botão
-> **Testar com exemplo** transcreve um clipe de 24 s em domínio público.
+> A demo roda no Hugging Face Spaces e **hiberna depois de um tempo sem uso**: a
+> primeira visita pode levar cerca de um minuto para acordar — não está quebrada.
+> Lá os limites são menores que os locais (5 min de áudio, 50 MB, modelo `base`),
+> porque a CPU é compartilhada. Sem arquivo à mão, o botão **Testar com exemplo**
+> transcreve um clipe de 24 s em domínio público.
 
 ![Tela da aplicação com uma transcrição pronta: métricas de duração, idioma, segmentos e palavras, o texto editável e os dois botões de download](docs/tela.png)
 
@@ -182,13 +182,6 @@ Modelos maiores acertam mais jargão, siglas e nomes próprios. Se termos do seu
 domínio saírem errados, subir de `small` para `medium` costuma resolver.
 
 ## Decisões técnicas
-
-**Duas telas, um motor.** A versão local é o `app.py` (Streamlit) e a demo
-pública é o `app_gradio.py` (Gradio) — porque a conta gratuita do Spaces não
-libera o SDK Docker, que é como a imagem deste repositório roda. As duas telas
-chamam a mesma `transcrever()` de `audioTranscricao.py`: nenhuma reimplementa
-decodificação, teto de duração ou pós-processamento. O que muda entre as duas
-instalações sai de variável de ambiente, não de código duplicado.
 
 **A demo roda a mesma imagem, não uma versão paralela.** O Space usa SDK Docker e
 constrói o `Dockerfile` deste repositório; o que muda lá — modelo `base`, teto de
