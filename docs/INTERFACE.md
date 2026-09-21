@@ -1,7 +1,7 @@
 # A tela
 
-Como a interface está organizada, como o cancelamento funciona por dentro e as
-cores com as razões de contraste medidas. O resumo está no
+Como a interface está organizada, como uma transcrição pode ser interrompida
+(pela pessoa ou pela rede) e as cores com as razões de contraste medidas. O resumo está no
 [README](../README.md#como-usar).
 
 A interface tem três estados e mostra um de cada vez:
@@ -29,6 +29,18 @@ mostrava nada — passou a chamar o mesmo callback de progresso a cada minuto de
 sem resposta durante toda essa fase, que num arquivo longo leva dezenas de
 segundos.
 
+**Sobra uma janela em que o botão não responde, e ela é inevitável.** O
+`faster-whisper` roda a detecção de voz e monta o espectrograma *dentro* do
+`transcribe()`, antes de devolver o gerador, sem passar por nenhuma chamada de
+quem o chamou — não há onde inserir um ponto de rendição. Medido com `base`:
+1,9 s para 5 min de áudio e 7,0 s para 20 min. Cresce com a duração, mas é uma
+fração pequena da espera total (o teto de 20 min sai em ~2,5 min no Space). O que
+dá para fazer é a tela
+dizer o que está acontecendo, e é o que a `FASE_ANALISE` faz: o painel troca para
+"Analisando o áudio (detecção de voz)" em vez de ficar parado no fim do preparo,
+parecendo travado. A barra não é mexida nessa fase — zerá-la ou enchê-la seria
+inventar um progresso que não existe.
+
 Quando o clique chega, o Streamlit interrompe o script levantando uma exceção
 que herda de `BaseException`, e não de `Exception`. Ela passa direto pelos
 `except` da tela — de propósito — mas não pelo `finally` de
@@ -43,6 +55,34 @@ um resultado normal, editável e exportável, com um aviso dizendo até que pont
 áudio o texto vai. Cancelando antes do primeiro segmento, a tela volta ao estado
 de entrada com uma mensagem neutra. Nos dois casos o arquivo enviado continua no
 uploader, para recomeçar sem reenviar.
+
+## Quando a conexão cai
+
+Perder o websocket **mata a transcrição em andamento**, não só a tela. O servidor
+do Streamlit chama `request_script_stop()` na sessão que desconecta
+(`runtime/websocket_session_manager.py`), e não há opção de configuração que mude
+isso. Basta trocar de app no celular, uma oscilação de rede ou a tampa do
+notebook. Com o teto da demo em 20 minutos de áudio, a janela em que isso pode
+acontecer deixou de ser desprezível.
+
+Por dentro é o mesmo evento do cancelamento — o script é interrompido no meio e a
+pilha desmontada —, com uma diferença: ninguém marcou `cancelado`, porque ninguém
+clicou em nada. **Era por aí que a perda passava silenciosa**: o script recomeçava
+do topo na reconexão, não encontrava `texto_editado` e a tela voltava ao estado
+vazio como se nada tivesse acontecido, com os minutos já transcritos presos no
+`session_state` e ninguém para mostrá-los.
+
+Hoje a tela trata os dois casos pelo mesmo `_salvar_parcial`, e o que os separa é
+só a frase do aviso: a queda diz que a transcrição foi interrompida e aponta a
+causa provável, em vez de chamar de "cancelada" o que ninguém cancelou. Quem
+perdeu a conexão não sabe que perdeu — a aba dele continuou aberta —, e sem dizer
+a causa o texto pela metade parece defeito da ferramenta.
+
+Chegar a esse rerun depende de a sessão ainda existir quando o navegador
+reconecta, e isso é o `server.disconnectedSessionTTL` que decide. O padrão do
+Streamlit é 120 s, dimensionado para "pequenas quedas de rede" — curto demais
+aqui, então o `.streamlit/config.toml` o leva a 10 minutos. Não mais que isso:
+uma sessão guardada segura também o arquivo que ela enviou.
 
 ## Paleta
 

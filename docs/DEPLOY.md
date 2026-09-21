@@ -30,12 +30,51 @@ Não sobem: `docs/`, `dados/` e os verificadores.
 
 **A demo roda a mesma imagem da instalação local.** O SDK do Space é `docker`, e
 o `app_port: 8501` do frontmatter aponta para a porta que o `entrypoint.sh` usa.
-Os limites de demo não são outro código: o entrypoint aplica modelo `base`, teto
-de 5 minutos e upload de 50 MB quando a variável `SPACE_ID` existe — é o Hugging
-Face que a define — e desliga a proteção XSRF do Streamlit, que é por cookie e
-não sobrevive ao iframe do Spaces (com ela ligada, o `st.file_uploader` não
-funciona lá). Fora do Space nada disso roda, e a instalação local mantém `small`,
-4 horas, 256 MB e o XSRF ligado.
+Os limites de demo não são outro código: o entrypoint aplica modelo `base`,
+seletor restrito a `base` e `small`, teto de 20 minutos e upload de 100 MB
+quando a variável `SPACE_ID` existe — é o Hugging Face que a define —, marca a
+execução como demo (`TRANSCRICAO_DEMO`, que troca a mensagem do teto de duração
+por uma que o visitante possa agir sobre) e desliga a proteção XSRF do Streamlit,
+que é por cookie e não sobrevive ao iframe do Spaces (com ela ligada, o
+`st.file_uploader` não funciona lá). Fora do Space nada disso roda, e a instalação
+local mantém `small`, os cinco modelos, 4 horas, 256 MB e o XSRF ligado.
+
+**Quanto tempo leva, medido no Space.** Não extrapolado de uma máquina local --
+a extrapolação errou por cerca de 5x, para pior. Medições de ponta a ponta, do
+clique em **Transcrever** até o texto na tela, com o modelo `base` no hardware
+`cpu-basic`:
+
+| Áudio | Relógio | Fator |
+|---|---|---|
+| 5 min | 25 a 32 s | 0,08–0,11x |
+| 19 min 30 | 2 min 00 | 0,10x |
+| **20 min (o teto)** | **2 min 38** | **0,13x** |
+
+Ou seja: o teto da demo custa cerca de **2,5 minutos** de espera, com a posição no
+áudio e a estimativa do que falta na tela o tempo todo. A CPU do Space chegou a
+sair mais rápida que uma máquina local de 12 núcleos no mesmo arquivo -- o
+`ctranslate2` em int8 não ganha muito com mais núcleos, e o servidor tem núcleos
+melhores. Isso também é o que sustenta o `disconnectedSessionTTL` de 10 minutos
+do `.streamlit/config.toml`: a janela de guarda é quatro vezes maior que a
+transcrição mais longa que a demo aceita.
+
+As medições saem do [`medir_demo.py`](../medir_demo.py), na raiz do repositório:
+sem navegador, ele fala o protocolo websocket do Streamlit direto -- pede a URL
+de upload, envia o arquivo, dispara o widget do botão e lê os `ForwardMsg` até o
+`text_area` do resultado aparecer. É ferramenta de medição e **não sobe para o
+Space**: a lista de `deploy/publicar_space.py` não o inclui.
+
+```bash
+python medir_demo.py dados/aula.mp3 --repeticoes 3   # descarte a primeira
+```
+
+A primeira medição de um container frio sai mais lenta, porque o modelo ainda não
+está no `lru_cache` de `carregar_modelo()`.
+
+**Por que o seletor é restrito.** `medium` e `large-v3` não estão na imagem — o
+Dockerfile embute só `base` e `small`. Deixá-los no seletor de uma demo é um
+download de 1,5 GB ou 3 GB para disco efêmero, disparado no meio da transcrição,
+e depois dezenas de minutos de espera em 2 vCPU compartilhadas.
 
 O modelo vem embutido na imagem porque **o disco do Space é efêmero**: o que for
 baixado em execução some no próximo reinício.

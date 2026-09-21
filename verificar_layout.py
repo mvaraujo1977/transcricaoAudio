@@ -6,7 +6,12 @@ mesmo caminho que a transcricao real usa para sobreviver aos reruns.
 
 O cancelamento e testado com uma transcrever() falsa que levanta a mesma excecao
 que o Streamlit usa para interromper o script quando um clique chega, a
-RerunException. E o unico jeito de exercitar esse caminho sem navegador.
+RerunException. E o unico jeito de exercitar esse caminho sem navegador. A queda
+de conexao usa a outra excecao, StopException, que e a que o servidor provoca ao
+parar o script de uma sessao que perdeu o websocket.
+
+Os limites da demo sao exercitados pelas mesmas variaveis de ambiente que o
+entrypoint.sh define quando SPACE_ID existe.
 
 Uso: python verificar_layout.py
 """
@@ -18,7 +23,8 @@ import tempfile
 import wave
 
 import audioTranscricao
-from streamlit.runtime.scriptrunner_utils.exceptions import RerunException
+from streamlit.runtime.scriptrunner_utils.exceptions import (RerunException,
+                                                             StopException)
 from streamlit.runtime.scriptrunner_utils.script_requests import RerunData
 from streamlit.testing.v1 import AppTest
 
@@ -103,6 +109,47 @@ def transcrever_falsa(segmentos, cancelar_em=None):
     return falsa
 
 
+def transcrever_interrompida(segmentos, parar_em):
+    """Imita a transcricao morta de FORA, como numa queda de conexao.
+
+    A diferenca para transcrever_falsa(cancelar_em=...) e o que NAO acontece
+    aqui: ninguem marca `cancelado`, porque ninguem clicou em nada. O servidor do
+    Streamlit chama request_script_stop() na sessao que perdeu o websocket, e o
+    script morre na chamada seguinte com StopException -- sem rerun. O rerun vem
+    depois, quando o navegador reconecta, e e la que a tela precisa perceber que
+    sobrou trabalho parcial sem dono.
+    """
+    def falsa(caminho, text_output_path=None, idioma="pt-BR", modelo='small',
+              progresso=None, vocabulario=None, max_horas=None, ao_segmento=None):
+        if progresso is not None:
+            progresso(60.0, DURACAO_FALSA, audioTranscricao.FASE_PREPARO)
+
+        for indice, segmento in enumerate(segmentos):
+            if ao_segmento is not None:
+                ao_segmento(segmento)
+            if progresso is not None:
+                progresso(segmento.end, DURACAO_FALSA,
+                          audioTranscricao.FASE_TRANSCRICAO)
+            if indice + 1 >= parar_em:
+                raise StopException()
+
+        texto = '\n\n'.join(audioTranscricao.agrupar_em_paragrafos(segmentos))
+        return audioTranscricao.Transcricao(texto, list(segmentos), DURACAO_FALSA, 'pt')
+
+    return falsa
+
+
+def com_ambiente(**variaveis):
+    """Aplica variaveis de ambiente e devolve como estavam, para restaurar."""
+    anterior = {nome: os.environ.get(nome) for nome in variaveis}
+    for nome, valor in variaveis.items():
+        if valor is None:
+            os.environ.pop(nome, None)
+        else:
+            os.environ[nome] = valor
+    return anterior
+
+
 def app_com_arquivo():
     """AppTest com um arquivo ja escolhido no uploader, pronto para transcrever."""
     app = AppTest.from_file('app.py', default_timeout=120)
@@ -171,8 +218,11 @@ def main():
     conferir(all(passo in marcacoes for passo in
                  ["1.] Envie o arquivo", "2.] Roda nesta máquina", "3.] Revise e baixe"]),
              "os tres passos, numerados na cor de destaque")
-    conferir("até 200 MB" in legendas and "mp3" in legendas,
-             "instrucoes do uploader em portugues, com o teto de upload")
+    conferir("até 200 MB" in legendas and "4 horas de áudio" in legendas
+             and "mp3" in legendas,
+             "instrucoes do uploader em portugues, com os dois tetos")
+    conferir("medium" in legendas and "large-v3" in legendas,
+             "sem restricao, a legenda dos modelos cita os grandes")
     conferir("github.com/mvaraujo1977/transcricaoAudio" in legendas,
              "rodape com link para o repositorio")
 
@@ -309,13 +359,110 @@ def main():
     finally:
         audioTranscricao.transcrever = original
 
+    print("INTERRUPCAO DE FORA (queda de conexao)")
+    try:
+        antes = temporarios_nossos()
+        segmentos = segmentos_falsos(4)
+        audioTranscricao.transcrever = transcrever_interrompida(segmentos, parar_em=3)
+        caiu = app_com_arquivo()
+        caiu.button[0].click().run()
+
+        conferir(caiu.session_state.get('execucao_ativa') is True,
+                 "a marca de execucao fica de pe: ninguem pediu cancelamento")
+        conferir(caiu.session_state.get('cancelado') is None,
+                 "nada de `cancelado`: o corte nao veio de um clique")
+        conferir(len(caiu.session_state.get('segmentos_parciais') or []) == 3,
+                 "os segmentos ja reconhecidos ficaram no session_state")
+        conferir(temporarios_nossos() <= antes,
+                 "temporario removido pelo finally, mesmo sem rerun")
+
+        # O navegador reconecta e pede um rerun: e aqui que a tela precisa
+        # perceber o trabalho orfao em vez de voltar ao estado vazio.
+        caiu.run()
+        conferir(not caiu.exception, "o rerun da reconexao roda sem excecao")
+        conferir(caiu.session_state.get('execucao_ativa') is False,
+                 "nenhum estado preso em execucao depois da reconexao")
+        conferir(caiu.session_state.get('parcial_ate') == segmentos[2].end,
+                 "marca ate onde o texto parcial vai")
+        recuperado = caiu.text_area(key='texto_editado').value
+        conferir(all(s.text in recuperado for s in segmentos[:3])
+                 and not any(s.text in recuperado for s in segmentos[3:]),
+                 "texto parcial recuperado, e so o que foi reconhecido")
+        avisos = " ".join(a.value.lower() for a in caiu.warning)
+        conferir("interrompida" in avisos and "conexão" in avisos,
+                 "aviso diz que foi interrupcao, nao cancelamento")
+        conferir("cancelada" not in avisos,
+                 "nao chama de cancelamento o que ninguem cancelou")
+        conferir(len(caiu.download_button) == 2,
+                 "o parcial recuperado e exportavel como qualquer resultado")
+    finally:
+        audioTranscricao.transcrever = original
+
+    print("LIMITES DA DEMO (variaveis do entrypoint)")
+    anterior = com_ambiente(TRANSCRICAO_MODELOS='base,small',
+                            TRANSCRICAO_MODELO='base',
+                            TRANSCRICAO_MAX_MINUTOS='20',
+                            TRANSCRICAO_DEMO='1')
+    try:
+        demo = AppTest.from_file('app.py', default_timeout=60)
+        demo.run()
+        conferir(not demo.exception, "a tela roda com os limites da demo")
+
+        seletor = demo.selectbox(key='modelo')
+        conferir(list(seletor.options) == ['base', 'small'],
+                 "seletor restrito a base e small, do mais leve ao mais pesado")
+        conferir(seletor.value == 'base', "base vem pre-selecionado")
+
+        legendas_demo = " ".join(c.value for c in demo.caption)
+        conferir("20 minutos de áudio" in legendas_demo,
+                 "a tela anuncia o teto de duracao da demo")
+        conferir("medium" not in legendas_demo and "large-v3" not in legendas_demo,
+                 "a legenda nao manda procurar modelo que nao esta no seletor")
+
+        # A mensagem do teto de duracao e o que o visitante le ao esbarrar nele:
+        # falar de variavel de ambiente e --sem-limite ali e um beco sem saida.
+        mensagem = audioTranscricao._mensagem_limite(20 * 60.0, 32 * 60.0)
+        conferir("32 min" in mensagem and "20 min" in mensagem,
+                 "a mensagem diz a duracao do arquivo e o teto")
+        conferir("TRANSCRICAO_MAX_HORAS" not in mensagem
+                 and "--sem-limite" not in mensagem,
+                 "nada que o visitante da demo nao possa fazer")
+        conferir("demo pública" in mensagem
+                 and audioTranscricao.URL_PROJETO in mensagem,
+                 "diz que o teto e da demo e aponta onde rodar sem ele")
+    finally:
+        com_ambiente(**anterior)
+
+    print("LIMITE DE DURACAO FORA DA DEMO")
+    mensagem_local = audioTranscricao._mensagem_limite(4 * 3600.0)
+    conferir("TRANSCRICAO_MAX_HORAS" in mensagem_local
+             and "--sem-limite" in mensagem_local,
+             "sem a marca de demo, a mensagem volta a falar com quem tem shell")
+
+    print("TETO CONTRA O PADDING DO ENCODER")
+    # Um corte de exatos 20 min exportado em mp3 chega com 1200,000979 s: era
+    # recusado por um milissegundo, e a mensagem dizia "tem 20 min, acima do
+    # limite de 20 min". Medido no Space, nao em teoria.
+    tolerancia = audioTranscricao.TOLERANCIA_LIMITE_SEGUNDOS
+    conferir(1200.000979 <= 1200.0 + tolerancia,
+             "audio de 20 min com padding de mp3 nao e recusado pelo teto de 20 min")
+    conferir(1260.0 > 1200.0 + tolerancia,
+             "a folga nao vira um teto novo: 21 min continua recusado")
+    for limite, declarada in ((1200.0, 1201.0), (4 * 3600.0, 4 * 3600.0 + 1),
+                              (300.0, 301.0)):
+        texto = audioTranscricao._mensagem_limite(limite, declarada)
+        antes, _, depois = texto.partition(', acima do limite de ')
+        conferir(antes.split('tem ')[-1].strip() != depois.split('.')[0].strip(),
+                 "mensagem nao repete o mesmo numero dos dois lados "
+                 "(teto {0:.0f} s, audio {1:.0f} s)".format(limite, declarada))
+
     print("-" * 60)
     if falhas:
         print("{0} FALHA(S):".format(len(falhas)))
         for descricao in falhas:
             print("  - {0}".format(descricao))
         return 1
-    print("tres estados e os dois cancelamentos conferidos, sem falha")
+    print("estados, interrupcoes e limites da demo conferidos, sem falha")
     return 0
 
 

@@ -8,10 +8,11 @@ import time
 
 import streamlit as st
 
-from audioTranscricao import (FASE_PREPARO, FASE_TRANSCRICAO,
-                              LIMITE_TOKENS_VOCABULARIO, MODELOS,
+from audioTranscricao import (FASE_ANALISE, FASE_PREPARO, FASE_TRANSCRICAO,
+                              LIMITE_TOKENS_VOCABULARIO, MODELOS, URL_PROJETO,
                               agrupar_em_paragrafos, inicio_dos_paragrafos,
-                              modelo_padrao, preparar_vocabulario, transcrever)
+                              limite_horas, modelo_padrao, modelos_disponiveis,
+                              preparar_vocabulario, transcrever)
 from gerar_pdf import transcricao_para_pdf
 
 FORMATOS_ACEITOS = ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aiff', 'mp4', 'mkv', 'avi', 'mov']
@@ -98,6 +99,35 @@ def _nome_base(nome_arquivo):
     return os.path.splitext(os.path.basename(nome_arquivo or 'transcricao'))[0] or 'transcricao'
 
 
+def _limite_de_duracao():
+    """Teto de duração do áudio, por extenso, para a tela anunciar.
+
+    Vem de limite_horas(), não de um número escrito à mão: o mesmo código serve a
+    instalação pessoal (4 horas) e a demo pública (20 minutos), e a tela precisa
+    dizer o teto que está mesmo valendo. Por extenso e com o plural certo porque
+    isto é texto de interface, não a forma curta das mensagens de erro.
+
+    Devolve None quando o teto não é legível. limite_horas() recusa uma variável
+    de ambiente mal escrita com ValueError, e isto aqui roda ao DESENHAR a tela,
+    não ao transcrever: deixar subir trocaria a página inteira por um traceback
+    do Streamlit por causa de um valor que ainda nem foi usado. A recusa continua
+    acontecendo na hora da transcrição, que é onde ela tem sentido e onde a tela
+    já sabe mostrá-la como erro.
+    """
+    try:
+        horas = limite_horas()
+    except ValueError:
+        return None
+
+    if horas < 1:
+        minutos = horas * 60
+        return "1 minuto" if round(minutos) == 1 else "{0:.0f} minutos".format(minutos)
+    if abs(horas - round(horas)) < 0.05:
+        inteiro = int(round(horas))
+        return "1 hora" if inteiro == 1 else "{0} horas".format(inteiro)
+    return "{0:.1f} horas".format(horas)
+
+
 def _modelo_baixado(nome_modelo):
     """Diz se o modelo já está no cache local, para avisar sobre o download."""
     raiz = os.environ.get('HF_HOME') or os.path.join(os.path.expanduser('~'), '.cache', 'huggingface')
@@ -164,6 +194,39 @@ def _pedir_cancelamento():
         st.session_state['cancelado'] = True
 
 
+def _salvar_parcial(upload, idioma, motivo):
+    """Transforma os segmentos já reconhecidos num resultado normal da tela.
+
+    Serve aos DOIS jeitos de uma transcrição acabar antes da hora, que por dentro
+    são o mesmo evento: o script é interrompido no meio e a pilha desmontada. Um
+    é o clique em Cancelar; o outro é a queda da conexão, que o servidor do
+    Streamlit trata chamando `request_script_stop()` na sessão desconectada
+    (`runtime/websocket_session_manager.py`) -- ou seja, perder o websocket mata
+    a transcrição em andamento, não só a tela.
+
+    O que sobra nos dois casos é o que foi guardado segmento a segmento no
+    session_state. `motivo` só decide a frase do aviso; o resultado é igual.
+
+    Devolve True quando havia algo a salvar.
+    """
+    st.session_state['execucao_ativa'] = False
+    parciais = st.session_state.pop('segmentos_parciais', None) or []
+    if not parciais:
+        return False
+
+    st.session_state['texto_editado'] = '\n\n'.join(agrupar_em_paragrafos(parciais))
+    st.session_state['segmentos'] = parciais
+    st.session_state['duracao'] = st.session_state.get('duracao_audio')
+    st.session_state['idioma_detectado'] = None
+    st.session_state['nome_origem'] = (
+        NOME_EXEMPLO if st.session_state.get('usar_exemplo')
+        else (upload.name if upload is not None else None))
+    st.session_state['idioma_escolhido'] = idioma
+    st.session_state['parcial_ate'] = parciais[-1].end
+    st.session_state['motivo_parcial'] = motivo
+    return True
+
+
 def _executar_transcricao(caminho, idioma, modelo, vocabulario=None):
     """Roda a transcrição desenhando o painel de progresso.
 
@@ -213,6 +276,18 @@ def _executar_transcricao(caminho, idioma, modelo, vocabulario=None):
             nonlocal anunciou_transcricao
             decorrido = time.monotonic() - inicio
             campo_decorrido.metric("Decorrido", _mmss(decorrido))
+
+            if fase == FASE_ANALISE:
+                # A detecção de voz roda dentro do transcribe(), sem devolver o
+                # controle: nesta janela o botão Cancelar não responde (veja
+                # FASE_ANALISE). Sem dizer isso, o painel fica parado no fim do
+                # preparo e parece travado -- e num áudio de 20 min a janela
+                # passa de alguns segundos. A barra não é mexida de propósito:
+                # zerá-la ou enchê-la aqui seria inventar um progresso que não
+                # existe, e a virada de rótulo já conta a mudança de fase.
+                status.update(label="Analisando o áudio (detecção de voz)...",
+                              expanded=True)
+                return
 
             if fase == FASE_PREPARO:
                 # Ainda não há transcrição: posição e estimativa continuam em
@@ -316,21 +391,37 @@ def _painel_de_entrada(processando, mostrar_exemplo=False):
     upload = st.file_uploader("Arquivo de áudio ou vídeo", type=FORMATOS_ACEITOS,
                               key='upload', disabled=processando)
     # Substitui as instruções em inglês do próprio uploader, escondidas no ESTILO.
-    # O teto vem de server.maxUploadSize, que muda entre o container (256 MB) e a
-    # execução local (200 MB), então é lido em vez de escrito à mão.
-    st.caption("Arraste o arquivo ou clique em Upload — até {0} MB. "
+    # São DOIS tetos, e eles não são equivalentes: o de tamanho vem de
+    # server.maxUploadSize e o de duração de limite_horas(). Um `.wav` de 20 min
+    # bate no de tamanho muito antes do de duração, então anunciar só um deixaria
+    # a recusa sem explicação. Ambos lidos, nunca escritos à mão, porque mudam
+    # entre a instalação pessoal e a demo pública.
+    duracao = _limite_de_duracao()
+    st.caption("Arraste o arquivo ou clique em Upload — até {0}. "
                "Formatos aceitos: {1}.".format(
-                   st.get_option('server.maxUploadSize'),
+                   "{0} MB e {1} de áudio".format(
+                       st.get_option('server.maxUploadSize'), duracao)
+                   if duracao else "{0} MB".format(
+                       st.get_option('server.maxUploadSize')),
                    ', '.join(FORMATOS_ACEITOS)))
 
     with st.expander("Opções avançadas", expanded=False):
         rotulo_idioma = st.selectbox("Idioma do áudio", list(IDIOMAS), index=0,
                                      key='rotulo_idioma', disabled=processando)
-        modelo = st.selectbox("Modelo", MODELOS, index=MODELOS.index(modelo_padrao()),
+        # A lista oferecida pode ser menor que MODELOS: veja modelos_disponiveis().
+        modelos = modelos_disponiveis()
+        modelo = st.selectbox("Modelo", modelos, index=modelos.index(modelo_padrao()),
                               key='modelo', disabled=processando)
-        st.caption("Modelos maiores são mais precisos e mais lentos. `small` costuma "
-                   "equilibrar bem; `medium` e `large-v3` ganham em jargão e nomes "
-                   "próprios, ao custo de várias vezes o tempo de processamento.")
+        if len(modelos) < len(MODELOS):
+            # Com a lista restrita, citar `medium` e `large-v3` mandaria a pessoa
+            # procurar no seletor duas opções que não estão lá.
+            st.caption("Modelos maiores são mais precisos e mais lentos. A lista "
+                       "aqui é curta de propósito: a CPU é compartilhada, e os "
+                       "modelos maiores dariam uma espera de dezenas de minutos.")
+        else:
+            st.caption("Modelos maiores são mais precisos e mais lentos. `small` costuma "
+                       "equilibrar bem; `medium` e `large-v3` ganham em jargão e nomes "
+                       "próprios, ao custo de várias vezes o tempo de processamento.")
         if not _modelo_baixado(modelo):
             st.info("O modelo **{0}** ({1}) será baixado na primeira transcrição.".format(
                 modelo, TAMANHO_MODELO.get(modelo, '')))
@@ -396,6 +487,7 @@ def _painel_de_apresentacao():
         st.markdown("**:gray[2.] Roda nesta máquina**")
         st.caption("O modelo Whisper processa o áudio localmente, sem conta, sem "
                    "chave de API e sem requisição de saída.")
+
     with passo_c:
         st.markdown("**:gray[3.] Revise e baixe**")
         st.caption("O texto sai em parágrafos, editável na tela, e exporta em "
@@ -409,12 +501,20 @@ def _painel_de_resultado():
 
     parcial_ate = st.session_state.get('parcial_ate')
     if parcial_ate is not None:
-        # O aviso fica enquanto o texto for parcial, não só no rerun seguinte ao
-        # cancelamento: quem voltar à tela depois precisa saber o que tem em mãos.
+        # O aviso fica enquanto o texto for parcial, não só no rerun seguinte à
+        # interrupção: quem voltar à tela depois precisa saber o que tem em mãos.
         duracao_total = st.session_state.get('duracao_audio')
-        st.warning("Transcrição cancelada. O texto abaixo cobre o áudio até "
-                   "**{0}**{1} — o restante não chegou a ser transcrito.".format(
-                       _mmss(parcial_ate),
+        if st.session_state.get('motivo_parcial') == 'interrupcao':
+            # Quem perdeu a conexão não sabe que perdeu: a aba dele continuou
+            # aberta. Sem dizer a causa provável, o texto pela metade parece erro
+            # da ferramenta -- e ele repetiria a transcrição inteira sem motivo.
+            abertura = ("A transcrição foi interrompida antes do fim, em geral "
+                        "porque a conexão com esta página caiu.")
+        else:
+            abertura = "Transcrição cancelada."
+        st.warning("{0} O texto abaixo cobre o áudio até **{1}**{2} — o restante "
+                   "não chegou a ser transcrito.".format(
+                       abertura, _mmss(parcial_ate),
                        ", de {0}".format(_mmss(duracao_total)) if duracao_total else ""))
 
     coluna_a, coluna_b, coluna_c, coluna_d = st.columns(4)
@@ -532,31 +632,36 @@ if processando:
             NOME_EXEMPLO if do_exemplo else upload.name)
         st.session_state['idioma_escolhido'] = idioma or resultado.idioma_detectado
         st.session_state.pop('parcial_ate', None)
+        st.session_state.pop('motivo_parcial', None)
         st.session_state.pop('segmentos_parciais', None)
     st.rerun()
 
 if st.session_state.pop('cancelado', False):
     # A execução foi interrompida no meio: o temporário já saiu no `finally` de
     # _transcrever_upload, e o que sobrou para decidir é o trabalho parcial.
-    st.session_state['execucao_ativa'] = False
-    parciais = st.session_state.pop('segmentos_parciais', None) or []
-    if parciais:
-        # Os segmentos já reconhecidos viram um resultado normal, editável e
-        # exportável, marcado como parcial para a tela poder avisar até onde vai.
-        st.session_state['texto_editado'] = '\n\n'.join(agrupar_em_paragrafos(parciais))
-        st.session_state['segmentos'] = parciais
-        st.session_state['duracao'] = st.session_state.get('duracao_audio')
-        st.session_state['idioma_detectado'] = None
-        st.session_state['nome_origem'] = (
-            NOME_EXEMPLO if st.session_state.get('usar_exemplo')
-            else (upload.name if upload is not None else None))
-        st.session_state['idioma_escolhido'] = idioma
-        st.session_state['parcial_ate'] = parciais[-1].end
-    else:
+    if not _salvar_parcial(upload, idioma, 'cancelamento'):
         # Cancelado antes do primeiro segmento (em geral ainda no preparo): não
         # há texto a mostrar, e a tela volta ao estado de entrada -- com o
         # arquivo enviado ainda no uploader, para recomeçar sem reenviar.
         st.session_state['aviso'] = "Transcrição cancelada."
+elif st.session_state.get('execucao_ativa'):
+    # A marca ficou de pé sem ninguém ter pedido cancelamento: o script foi
+    # parado de FORA. Na prática isso é a conexão caindo -- trocar de app no
+    # celular, uma oscilação de rede, a tampa do notebook --, porque o servidor
+    # do Streamlit para o script da sessão que perde o websocket.
+    #
+    # Sem este ramo a perda era silenciosa: o script recomeçava do topo, não
+    # encontrava `texto_editado` e a tela voltava ao estado vazio como se nada
+    # tivesse acontecido, com os minutos já transcritos presos no session_state
+    # e ninguém para mostrá-los.
+    #
+    # Chegar aqui depende de a sessão ainda existir quando o navegador reconecta:
+    # é o que `server.disconnectedSessionTTL` decide, e é por isso que o
+    # config.toml não deixa esse valor no padrão de 2 minutos.
+    if not _salvar_parcial(upload, idioma, 'interrupcao'):
+        st.session_state['aviso'] = (
+            "A transcrição foi interrompida antes de reconhecer qualquer trecho. "
+            "O arquivo continua no campo acima, para tentar de novo.")
 
 if st.session_state.get('erro'):
     st.error("Erro: {0}".format(st.session_state['erro']))
@@ -572,6 +677,7 @@ else:
     _painel_de_apresentacao()
 
 st.divider()
-st.caption("Projeto pessoal — código em "
-           "[github.com/mvaraujo1977/transcricaoAudio]"
-           "(https://github.com/mvaraujo1977/transcricaoAudio).")
+# A URL sai de URL_PROJETO, a mesma que a mensagem do teto de duração usa na
+# demo: dois lugares apontando para o repositório, um valor só.
+st.caption("Projeto pessoal — código em [{0}]({1}).".format(
+    URL_PROJETO.split('//')[-1], URL_PROJETO))

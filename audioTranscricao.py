@@ -46,10 +46,36 @@ LIMITE_HORAS_PADRAO = 4.0
 VARIAVEL_LIMITE = 'TRANSCRICAO_MAX_HORAS'
 VARIAVEL_LIMITE_MINUTOS = 'TRANSCRICAO_MAX_MINUTOS'
 
+# Folga na comparação com o teto. O teto é anunciado em minutos inteiros e as
+# durações aparecem em mm:ss, mas a comparação é em ponto flutuante contra o que
+# o arquivo declara -- e todo encoder mp3/aac acrescenta padding no fim. Um corte
+# de exatos 20 min exportado em mp3 chega aqui com 1200,000979 s e era recusado
+# por UM MILISSEGUNDO, com a mensagem dizendo "tem 20 min, acima do limite de
+# 20 min". Um segundo de folga custa 16 k amostras (32 KB) e elimina essa classe
+# inteira de recusa, em que o arquivo é do tamanho anunciado e mesmo assim volta.
+TOLERANCIA_LIMITE_SEGUNDOS = 1.0
+
 # O modelo pré-selecionado também é configurável: a mesma imagem serve a máquina
 # pessoal e uma demo pública, que roda em CPU compartilhada e pede um modelo mais
 # leve. Veja modelo_padrao().
 VARIAVEL_MODELO = 'TRANSCRICAO_MODELO'
+
+# Quais modelos podem ser ESCOLHIDOS, que é diferente de qual vem pré-selecionado.
+# Numa demo pública os grandes precisam sair da lista: `medium` e `large-v3` nem
+# estão na imagem (o Dockerfile embute só `base` e `small`), então escolhê-los
+# dispararia um download de 1,5 GB ou 3 GB para disco efêmero no meio da
+# transcrição. Veja modelos_disponiveis().
+VARIAVEL_MODELOS = 'TRANSCRICAO_MODELOS'
+
+# Marca que a execução é uma demo pública, para as mensagens de erro falarem a
+# língua de quem está lá: quem abre a demo não tem shell, não define variável de
+# ambiente e não conhece as opções da linha de comando. É genérica de propósito
+# -- quem a define é o entrypoint, e o motor não precisa saber em que provedor
+# está rodando. Veja _mensagem_limite().
+VARIAVEL_DEMO = 'TRANSCRICAO_DEMO'
+
+# Para onde a demo manda quem esbarrou num limite dela.
+URL_PROJETO = 'https://github.com/mvaraujo1977/transcricaoAudio'
 
 # O Whisper trabalha internamente a 16 kHz mono; decodificar direto nesse
 # formato evita uma reamostragem depois.
@@ -62,6 +88,16 @@ TAXA_WHISPER = 16000
 # passa por uma chamada dele.
 FASE_PREPARO = 'preparo'
 FASE_TRANSCRICAO = 'transcricao'
+
+# Entre as duas há uma terceira, curta e cega: o faster-whisper roda a detecção
+# de voz e monta o espectrograma DENTRO do transcribe(), antes de devolver o
+# gerador, sem passar por nenhuma chamada de quem o chamou. Medido com `base`:
+# 1,9 s para 5 min de áudio e 7,0 s para 20 min -- cresce com a duração. Nessa
+# janela o cancelamento não tem como responder; o aviso abaixo existe para a tela
+# ao menos dizer o que está acontecendo, em vez de parecer travada no fim do
+# preparo. Vale poucos segundos: o teto de 20 min inteiro sai em ~2,5 min na CPU
+# do Space (veja docs/DEPLOY.md), então esta fase é uma fração pequena da espera.
+FASE_ANALISE = 'analise'
 
 # Um aviso de progresso a cada minuto de áudio decodificado. A decodificação
 # corre bem mais rápido que o tempo real (minutos de áudio por segundo), então
@@ -129,6 +165,65 @@ def _duracao_legivel(segundos):
     return "{0:.1f} h".format(segundos / 3600.0)
 
 
+def _duracao_exata(segundos):
+    """A mesma duração em h:mm:ss, para quando a forma arredondada não serve.
+
+    É a forma que a tela já usa em toda parte, e a única que distingue um áudio
+    de 20:01 de um teto de 20:00 -- em minutos arredondados os dois viram
+    "20 min", e a mensagem sai dizendo que 20 min está acima de 20 min.
+    """
+    total = int(round(segundos))
+    if total >= 3600:
+        return "{0}:{1:02d}:{2:02d}".format(total // 3600, (total % 3600) // 60,
+                                            total % 60)
+    return "{0}:{1:02d}".format(total // 60, total % 60)
+
+
+def em_demo():
+    """Diz se esta execução é a demo pública, conforme TRANSCRICAO_DEMO.
+
+    Quem liga a marca é o entrypoint; o motor não precisa saber em que provedor
+    está. Serve às mensagens de erro e à tela, que dizem coisas diferentes para
+    quem roda na própria máquina e para quem abre um link público -- em especial
+    sobre para onde o áudio vai, que é o ponto em que os dois casos divergem de
+    verdade.
+    """
+    return bool((os.environ.get(VARIAVEL_DEMO) or '').strip())
+
+
+def _mensagem_limite(limite_segundos, declarada=None):
+    """Monta o texto do DuracaoExcedida conforme quem vai lê.
+
+    A mensagem padrão fala com quem controla a máquina: cita a variável de
+    ambiente e a opção da linha de comando. Numa demo pública nada disso existe
+    para o visitante -- ele não tem shell nem acesso ao container --, e mandá-lo
+    "aumentar TRANSCRICAO_MAX_HORAS" é um beco sem saída. Lá a saída é outra:
+    dizer que o teto é da demo e apontar onde rodar o projeto sem esse teto.
+    """
+    if declarada is not None:
+        # Arredondadas para minutos, uma duração logo acima do teto sai idêntica
+        # a ele. Nesse caso as duas passam para h:mm:ss, senão a frase se
+        # contradiz -- "tem 20 min, acima do limite de 20 min".
+        texto_declarada = _duracao_legivel(declarada)
+        texto_limite = _duracao_legivel(limite_segundos)
+        if texto_declarada == texto_limite:
+            texto_declarada = _duracao_exata(declarada)
+            texto_limite = _duracao_exata(limite_segundos)
+        abertura = "O áudio tem {0}, acima do limite de {1}".format(
+            texto_declarada, texto_limite)
+    else:
+        abertura = "O áudio passa do limite de {0}".format(
+            _duracao_legivel(limite_segundos))
+
+    if em_demo():
+        return ("{0} desta demo pública. Para transcrever um arquivo maior, rode "
+                "o projeto na sua própria máquina, onde o teto é configurável: "
+                "{1}".format(abertura, URL_PROJETO))
+
+    return ("{0}. Aumente {1} ou use --sem-limite na linha de comando se o "
+            "arquivo for seu.".format(abertura, VARIAVEL_LIMITE))
+
+
 def _numero_positivo(bruto, variavel, unidade):
     """Converte o valor de uma variável de ambiente, exigindo número > 0."""
     try:
@@ -146,7 +241,7 @@ def limite_horas():
     """Teto de duração em horas.
 
     Configurável por TRANSCRICAO_MAX_HORAS ou, quando o teto é curto demais para
-    ser escrito em horas -- uma demo pública com 5 min, por exemplo --, por
+    ser escrito em horas -- uma demo pública com 20 min, por exemplo --, por
     TRANSCRICAO_MAX_MINUTOS, que tem precedência.
     """
     minutos = os.environ.get(VARIAVEL_LIMITE_MINUTOS)
@@ -159,6 +254,26 @@ def limite_horas():
     return _numero_positivo(horas, VARIAVEL_LIMITE, 'horas')
 
 
+def modelos_disponiveis():
+    """Modelos que a tela e a CLI oferecem, configurável por TRANSCRICAO_MODELOS.
+
+    Recebe uma lista separada por vírgula e devolve os nomes válidos na ordem de
+    MODELOS -- do mais leve ao mais pesado --, que é a ordem que a tela mostra.
+    Nomes desconhecidos são descartados, e uma lista que não sobre nada válido
+    cai no conjunto completo: uma variável mal escrita não pode deixar a
+    aplicação sem nenhum modelo para escolher.
+
+    Restringir a lista é o que uma demo pública precisa e uma instalação pessoal
+    não: veja o comentário de VARIAVEL_MODELOS.
+    """
+    bruto = (os.environ.get(VARIAVEL_MODELOS) or '').strip()
+    if not bruto:
+        return MODELOS
+    pedidos = {nome.strip() for nome in bruto.split(',') if nome.strip()}
+    validos = tuple(nome for nome in MODELOS if nome in pedidos)
+    return validos or MODELOS
+
+
 def modelo_padrao():
     """Modelo pré-selecionado na tela e na CLI, configurável por TRANSCRICAO_MODELO.
 
@@ -166,9 +281,18 @@ def modelo_padrao():
     e uma demo em CPU compartilhada, onde ele deixa a espera longa demais. Valor
     fora de MODELOS é ignorado: qual modelo está valendo fica visível na tela, e
     derrubar a aplicação por causa de uma variável mal escrita seria pior.
+
+    O resultado é sempre um item de modelos_disponiveis(), porque a tela procura
+    o padrão dentro da lista que oferece para achar o índice inicial: um padrão
+    fora dela seria um ValueError na abertura da página.
     """
+    disponiveis = modelos_disponiveis()
     escolhido = (os.environ.get(VARIAVEL_MODELO) or '').strip()
-    return escolhido if escolhido in MODELOS else MODELO_PADRAO
+    if escolhido in disponiveis:
+        return escolhido
+    if MODELO_PADRAO in disponiveis:
+        return MODELO_PADRAO
+    return disponiveis[0]
 
 
 def sondar_duracao(caminho):
@@ -205,7 +329,8 @@ def decodificar_audio(caminho, limite_segundos, progresso=None, total_estimado=N
     """
     # --sem-limite chega aqui como infinito, que não vira int: nesse caso não há
     # teto a comparar e a contagem serve só para saber se veio algum áudio.
-    maximo = int(limite_segundos * TAXA_WHISPER) if math.isfinite(limite_segundos) else None
+    maximo = (int((limite_segundos + TOLERANCIA_LIMITE_SEGUNDOS) * TAXA_WHISPER)
+              if math.isfinite(limite_segundos) else None)
     resampler = av.AudioResampler(format='s16', layout='mono', rate=TAXA_WHISPER)
     blocos = []
     total = 0
@@ -217,10 +342,7 @@ def decodificar_audio(caminho, limite_segundos, progresso=None, total_estimado=N
             bloco = convertido.to_ndarray().reshape(-1)
             total += bloco.shape[0]
             if maximo is not None and total > maximo:
-                raise DuracaoExcedida(
-                    "O áudio passa do limite de {0}. Aumente {1} ou use "
-                    "--sem-limite na linha de comando se o arquivo for seu.".format(
-                        _duracao_legivel(limite_segundos), VARIAVEL_LIMITE))
+                raise DuracaoExcedida(_mensagem_limite(limite_segundos))
             blocos.append(bloco)
             segundos = total / float(TAXA_WHISPER)
             if progresso is not None and segundos >= proximo_aviso:
@@ -317,12 +439,8 @@ def transcrever(caminho, text_output_path=None, idioma="pt-BR", modelo=MODELO_PA
     # Dois portões. A sonda recusa em milissegundos o arquivo que se declara
     # longo demais; a decodificação contada pega o que mente no cabeçalho.
     declarada = sondar_duracao(caminho)
-    if declarada is not None and declarada > limite_segundos:
-        raise DuracaoExcedida(
-            "O áudio tem {0}, acima do limite de {1}. Aumente {2} ou use "
-            "--sem-limite na linha de comando se o arquivo for seu.".format(
-                _duracao_legivel(declarada), _duracao_legivel(limite_segundos),
-                VARIAVEL_LIMITE))
+    if declarada is not None and declarada > limite_segundos + TOLERANCIA_LIMITE_SEGUNDOS:
+        raise DuracaoExcedida(_mensagem_limite(limite_segundos, declarada))
 
     audio = decodificar_audio(caminho, limite_segundos, progresso=progresso,
                               total_estimado=declarada)
@@ -348,6 +466,13 @@ def transcrever(caminho, text_output_path=None, idioma="pt-BR", modelo=MODELO_PA
     # `audio` já vem decodificado: o faster-whisper só chama o próprio decode
     # quando não recebe um ndarray, e info.duration é calculado a partir do
     # array, então a duração e o progresso seguem corretos.
+    #
+    # O aviso vem ANTES da chamada porque é a última oportunidade: veja
+    # FASE_ANALISE. Também é o último ponto em que um cancelamento pedido durante
+    # a decodificação ainda é processado sem esperar a detecção de voz terminar.
+    if progresso is not None:
+        progresso(0.0, None, FASE_ANALISE)
+
     segmentos_brutos, info = model.transcribe(
         audio,
         language=codigo_idioma(idioma),
@@ -407,7 +532,8 @@ def main(argv=None):
                         help="arquivo .txt de saída")
     parser.add_argument('-l', '--idioma', default='pt-BR',
                         help="idioma do áudio (ex.: en-US); vazio deixa o Whisper detectar")
-    parser.add_argument('-m', '--modelo', default=modelo_padrao(), choices=MODELOS,
+    parser.add_argument('-m', '--modelo', default=modelo_padrao(),
+                        choices=modelos_disponiveis(),
                         help="modelo Whisper: maiores são mais precisos e mais lentos "
                              "(padrão: {0}, ou {1})".format(modelo_padrao(), VARIAVEL_MODELO))
     parser.add_argument('-v', '--vocabulario', default=None,
@@ -423,6 +549,8 @@ def main(argv=None):
         if fase == FASE_PREPARO:
             print("\r  preparando: {0} lidos".format(_mmss(processado)),
                   end='', file=sys.stderr)
+        elif fase == FASE_ANALISE:
+            print("\r  detectando as falas...          ", end='', file=sys.stderr)
         elif total:
             print("\r  {0} de {1} ({2:.0f}%)".format(
                 _mmss(processado), _mmss(total), 100.0 * processado / total),

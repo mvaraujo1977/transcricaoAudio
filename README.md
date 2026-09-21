@@ -6,8 +6,8 @@ revisão na tela e exportação em `.txt` e `.pdf`.
 > A demo roda no [Hugging Face Spaces](https://huggingface.co/spaces/mvaraujo1977/transcricao-audio)
 > e **hiberna após 48 horas sem uso** — se estiver dormindo, a primeira
 > visita leva alguns segundos para acordar. Lá os limites são menores que
-> os locais (5 min de áudio, 50 MB, modelo `base`), porque a CPU é
-> compartilhada. Sem arquivo à mão, o botão **Testar com exemplo**
+> os locais (20 min de áudio, 100 MB, e a escolha de modelo para no `base`),
+> porque a CPU é compartilhada. Sem arquivo à mão, o botão **Testar com exemplo**
 > transcreve um clipe de 24 s em domínio público.
 
 ![Tela da aplicação com uma transcrição pronta: métricas de duração, idioma, segmentos e palavras, o texto editável e os dois botões de download](docs/tela.png)
@@ -112,9 +112,11 @@ as duas sai do ambiente, sem tocar no código.
 | Variável | Para quê | Padrão |
 |---|---|---|
 | `TRANSCRICAO_MODELO` | modelo pré-selecionado na tela e na CLI | `small` |
+| `TRANSCRICAO_MODELOS` | quais modelos a tela e a CLI **oferecem**, separados por vírgula | todos |
 | `TRANSCRICAO_MAX_HORAS` | teto de duração do áudio, em horas | `4` |
 | `TRANSCRICAO_MAX_MINUTOS` | o mesmo teto em minutos; tem precedência sobre o anterior | — |
 | `TRANSCRICAO_MAX_UPLOAD_MB` | teto de tamanho do arquivo enviado | `256` |
+| `TRANSCRICAO_DEMO` | marca a execução como demo pública, o que muda a mensagem do teto de duração | desligado |
 
 No `docker-compose.yml`, por exemplo:
 
@@ -179,12 +181,41 @@ docker compose run --rm transcricao \
 Modelos maiores acertam mais jargão, siglas e nomes próprios. Se termos do seu
 domínio saírem errados, subir de `small` para `medium` costuma resolver.
 
+### Quanto tempo leva
+
+Medido na demo pública, de ponta a ponta — do clique em **Transcrever** até o
+texto na tela —, com o modelo `base` na CPU compartilhada do Space:
+
+| Áudio | Relógio | Fator |
+|---|---|---|
+| 5 min | 25 a 32 s | 0,08–0,11x |
+| 19 min 30 | 2 min 00 | 0,10x |
+| **20 min (teto da demo)** | **2 min 38** | **0,13x** |
+
+Ou seja: **o maior arquivo que a demo aceita sai em cerca de 2 min 38**, com a
+posição no áudio e a estimativa do que falta na tela o tempo todo. Não é uma
+espera que peça paciência — é o tempo de ler o resto da página.
+
+Os números saem do `medir_demo.py`, que cronometra o mesmo caminho de um
+visitante e confere, pelas métricas da própria tela, que o áudio foi transcrito
+inteiro.
+
+**A CPU do Space chegou a ser mais rápida que uma máquina local de 12 núcleos**
+no arquivo de 5 minutos: 25–32 s lá contra 51,5 s aqui. Não é anomalia de
+medição. O `faster-whisper` roda sobre o CTranslate2 em `int8`, e quantização
+inteira não escala com quantidade de núcleos — a inferência fica limitada por
+largura de banda de memória e pelo que cada núcleo entrega sozinho, não pelo
+paralelismo. Somar núcleos medíocres não compensa núcleos melhores, e os do
+servidor são melhores. Vale como aviso: **extrapolar desempenho da sua máquina
+para o servidor erra feio**. A estimativa inicial para os 20 minutos, feita
+assim, errou por cerca de 5x — o número acima é medição, não conta.
+
 ## Decisões técnicas
 
 **A demo roda a mesma imagem, não uma versão paralela.** O Space usa SDK Docker e
-constrói o `Dockerfile` deste repositório; o que muda lá — modelo `base`, teto de
-5 minutos, upload de 50 MB — sai do `entrypoint.sh` quando a variável `SPACE_ID`
-existe, não de código duplicado. Houve um desvio no meio do caminho: no plano
+constrói o `Dockerfile` deste repositório; o que muda lá — modelo `base`, seletor
+restrito a `base` e `small`, teto de 20 minutos, upload de 100 MB — sai do
+`entrypoint.sh` quando a variável `SPACE_ID` existe, não de código duplicado. Houve um desvio no meio do caminho: no plano
 gratuito o SDK Docker não era oferecido, a demo nasceu como uma segunda tela em
 Gradio e o hardware ZeroGPU exigia uma função `@spaces.GPU` que a aplicação não
 tinha por que ter. Esse episódio, com os erros e as tentativas, está em
@@ -278,6 +309,7 @@ em **[docs/SEGURANCA.md](docs/SEGURANCA.md)**. Em resumo:
 | `.streamlit/config.toml` | tema da interface (paleta, fonte, bordas) |
 | `verificar_transcricao.py` | métricas de qualidade de uma transcrição (pontuação, jargão, repetição em loop) |
 | `verificar_layout.py` | carrega a tela nos três estados e no cancelamento, com o AppTest |
+| `medir_demo.py` | ferramenta de medição: cronometra uma transcrição na demo pública (não entra na imagem) |
 | `Dockerfile`, `docker-compose.yml` | imagem com o modelo embutido e porta em loopback |
 | `exemplos/` | áudio de exemplo em domínio público e seus [créditos](exemplos/CREDITOS.md) |
 | `deploy/` | README e dependências do Space, e o script que publica a demo |

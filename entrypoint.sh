@@ -16,13 +16,25 @@ if [ -n "$SPACE_ID" ]; then
     #
     # - modelo `base`: em 2 vCPU compartilhadas o `small` deixa a espera longa
     #   demais para uma demo; ele continua selecionável na tela.
-    # - teto de 5 min: ninguém espera mais que isso numa demo, e um teto de 4 h
+    # - lista restrita a `base` e `small`: são os dois que o Dockerfile embute.
+    #   `medium` e `large-v3` no seletor seriam um download de 1,5 GB ou 3 GB
+    #   para o disco efêmero do Space, disparado no meio da transcrição, e
+    #   depois dezenas de minutos de espera num teto de 20 min de áudio.
+    # - teto de 20 min: o que uma aula ou reunião curta ocupa, e ainda dentro do
+    #   que a CPU compartilhada entrega numa espera tolerável. Um teto de 4 h
     #   numa página pública é convite a abuso.
-    # - upload de 50 MB: cobre um áudio de 5 min com folga.
+    # - upload de 100 MB: cobre 20 min de mp3/m4a com folga. Não cobre 20 min de
+    #   `.wav` 44,1 kHz estéreo (~211 MB), que bate neste teto antes do de
+    #   duração -- por isso a tela anuncia os dois.
+    # - marca de demo: muda a mensagem do limite de duração, que no padrão manda
+    #   ajustar variável de ambiente e usar --sem-limite -- nada que o visitante
+    #   de uma página pública possa fazer.
     : "${TRANSCRICAO_MODELO:=base}"
-    : "${TRANSCRICAO_MAX_MINUTOS:=5}"
-    UPLOAD="${TRANSCRICAO_MAX_UPLOAD_MB:-50}"
-    export TRANSCRICAO_MODELO TRANSCRICAO_MAX_MINUTOS
+    : "${TRANSCRICAO_MODELOS:=base,small}"
+    : "${TRANSCRICAO_MAX_MINUTOS:=20}"
+    : "${TRANSCRICAO_DEMO:=1}"
+    UPLOAD="${TRANSCRICAO_MAX_UPLOAD_MB:-100}"
+    export TRANSCRICAO_MODELO TRANSCRICAO_MODELOS TRANSCRICAO_MAX_MINUTOS TRANSCRICAO_DEMO
 
     # O Streamlit protege contra XSRF com cookie, e o cookie não sobrevive ao
     # iframe em que o Spaces serve a aplicação: com a proteção ligada, o

@@ -68,6 +68,27 @@ borderColor = "#5B7871"
 # com pointer-events: none, que não ocupa espaço nem intercepta clique.
 toolbarMode = "minimal"
 
+[server]
+# Quanto tempo a sessão sobrevive sem websocket. O padrão do Streamlit é 120 s,
+# pensado para "pequenas quedas de rede" (o comentário é do próprio
+# MemorySessionStorage) -- curto demais aqui.
+#
+# Perder o websocket já custa a transcrição em andamento: o servidor chama
+# `request_script_stop()` na sessão que desconecta, e não há opção que mude isso.
+# O que este valor decide é se, ao voltar, a pessoa reencontra a sessão dela com
+# os minutos já transcritos, ou uma tela vazia. Com 120 s, trocar de app no
+# celular e voltar um pouco depois apagava tudo sem explicação.
+#
+# 10 min, não mais: uma sessão guardada segura também o arquivo que ela enviou
+# (até 100 MB na demo), então esticar isso é memória parada no servidor.
+disconnectedSessionTTL = 600
+
+# `websocketPingInterval` fica de fora de propósito. Ele serviria contra proxy
+# que derruba socket ocioso, mas o Streamlit iguala o TIMEOUT do ping ao
+# intervalo: um valor baixo passaria a derrubar a conexão sozinho se o laço de
+# eventos engasgar durante a transcrição -- exatamente o que queremos evitar.
+# Só vale mexer se a queda for observada de fato.
+
 [browser]
 # Mesma telemetria desligada que o Dockerfile passa por flag, para valer também
 # quando a aplicação roda fora do container.
