@@ -190,6 +190,16 @@ chamam a mesma `transcrever()` de `audioTranscricao.py`: nenhuma reimplementa
 decodificação, teto de duração ou pós-processamento. O que muda entre as duas
 instalações sai de variável de ambiente, não de código duplicado.
 
+**A demo carrega uma exigência da plataforma, não do projeto.** O Space roda em
+hardware **ZeroGPU**, que recusa subir sem enxergar uma função `@spaces.GPU` na
+inicialização (`No @spaces.GPU function detected during startup`) — mesmo quando
+a aplicação não quer GPU alguma, como é o caso: o motor é CTranslate2, que o
+ZeroGPU não acelera. Por isso `app_gradio.py` declara uma função decorada que
+nunca é chamada, e `spaces` está no `requirements.txt` do Space. Trocar o
+hardware para CPU básica resolveria, mas a Hugging Face não permite esse
+downgrade sem assinatura PRO. O caso está detalhado, com o que foi tentado, em
+[docs/DEPLOY.md](docs/DEPLOY.md).
+
 **Reconhecimento local em vez da API do Google.** A primeira versão usava o
 Google Speech Recognition e devolvia texto corrido, sem pontuação. Os dois
 motores transcreveram a **mesma aula de 37 minutos**, medida com o
@@ -282,7 +292,7 @@ em **[docs/SEGURANCA.md](docs/SEGURANCA.md)**. Em resumo:
 | `Dockerfile`, `docker-compose.yml` | imagem com o modelo embutido e porta em loopback |
 | `exemplos/` | áudio de exemplo em domínio público e seus [créditos](exemplos/CREDITOS.md) |
 | `deploy/` | README e dependências do Space, e o script que publica a demo |
-| `docs/` | [segurança](docs/SEGURANCA.md) e [interface](docs/INTERFACE.md) em detalhe |
+| `docs/` | [segurança](docs/SEGURANCA.md), [interface](docs/INTERFACE.md) e [publicação da demo](docs/DEPLOY.md) |
 
 ## Licença
 
