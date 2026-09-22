@@ -1,0 +1,25 @@
+# Fim de linha decidido AQUI, e nao pelo core.autocrlf de cada maquina.
+#
+# O motivo e concreto, nao teorico. Com core.autocrlf=true -- padrao em muita
+# instalacao do Git no Windows -- um `git checkout` reescreve a arvore de
+# trabalho com CRLF. O Dockerfile faz `COPY . .` DESSA arvore, e o /bin/sh do
+# Linux entao le `set -e\r` no entrypoint, nao reconhece a opcao e aborta: o
+# container entra em loop de reinicio e a aplicacao nunca sobe.
+#
+# Aconteceu de verdade, logo apos um `git checkout master`, e deixaria com
+# imagem quebrada qualquer pessoa que clonasse este repositorio no Windows --
+# inclusive a instalacao numa maquina de cliente, que e onde menos se quer
+# descobrir isso.
+* text=auto eol=lf
+
+# Exceto o que o proprio Windows interpreta, e que precisa de CRLF:
+# .bat com LF quebra em label e `goto`, e .url e formato INI do Windows.
+*.bat text eol=crlf
+*.url text eol=crlf
+
+# Binarios ficam fora de qualquer conversao.
+*.mp3 binary
+*.png binary
+*.gif binary
+*.ico binary
+*.pdf binary
