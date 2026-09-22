@@ -12,8 +12,10 @@ A pasta `cliente/` tem tudo o que vai para a máquina dele:
 |---|---|
 | `instalar.bat` | duplo clique, uma vez; casca fina sobre o `.ps1` |
 | `instalar.ps1` | carrega a imagem, sobe o serviço, cria o atalho |
-| `transcricao.ico` | ícone do atalho |
+| `transcricao.ico` | ícone do atalho principal |
+| `transcricao-planoB.ico` | ícone do atalho secundário |
 | `Se nao abrir - clique aqui.bat` | plano B, para quando o Docker ainda está acordando |
+| `gerar_icones.py` | gera os dois `.ico` |
 | `gerar_guia_pdf.py` | gera o PDF do guia a partir de `docs/GUIA-DO-CLIENTE.md` |
 
 Junto vai o `docker-compose.yml`, o `.tar` da imagem e o PDF do guia.
@@ -77,6 +79,18 @@ Resolvido fixando `image:` no compose.
 atalho nasce na Área de Trabalho chamado `TranscriÃ§Ã£o de Ã¡udio.url`. O
 `instalar.ps1` é gravado com BOM, e há um aviso no topo dele para não
 removerem.
+
+**Ícone em `.bat`.** Um `.bat` na Área de Trabalho carrega o ícone genérico de
+engrenagem do Windows: o formato não guarda ícone próprio. Por isso o `.bat`
+fica na pasta de instalação e o que vai para a mesa é um `.lnk` apontando para
+ele — `.lnk` guarda `IconLocation`. Os dois atalhos usam ícones da mesma
+família, para a Área de Trabalho mostrar um programa só.
+
+Sobre o desenho dos ícones: o tamanho que importa é **16 px**, não o 256 do
+preview. Uma onda com sete barras finas virava mancha cinza ali; três barras
+grossas ficavam legíveis mas o ícone lia como um **rosto** (três elementos em
+cima, barra horizontal embaixo). O que sobreviveu aos dois testes foi a onda
+como traço contínuo. O `gerar_icones.py` registra esse caminho em comentário.
 
 Vale notar que a Área de Trabalho pode estar redirecionada para o OneDrive
 (`C:\Users\<user>\OneDrive\Área de Trabalho`). O instalador usa

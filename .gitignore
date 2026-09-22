@@ -7,6 +7,7 @@ transcricao_audio.txt
 
 # Artefatos de entrega ao cliente, gerados a partir do repositorio
 cliente/*.tar
+cliente/*-previa-*.png
 
 # Áudios de trabalho montados no container
 dados/*

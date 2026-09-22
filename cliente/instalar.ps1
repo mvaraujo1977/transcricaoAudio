@@ -87,9 +87,24 @@ IconIndex=0
 "@
 [System.IO.File]::WriteAllText($atalho, $conteudo, [System.Text.UTF8Encoding]::new($false))
 
-# O plano B vai junto, com nome que explica sozinho quando usar.
-Copy-Item (Join-Path $aqui 'Se nao abrir - clique aqui.bat') `
-          (Join-Path $mesa 'Se não abrir - clique aqui.bat') -Force
+# O plano B vai como ATALHO .lnk, e nao como copia do .bat.
+#
+# Um .bat na Area de Trabalho carrega o icone generico de engrenagem do Windows:
+# .bat nao guarda icone proprio. O .lnk guarda, entao o arquivo executavel fica
+# na pasta de instalacao e so o atalho vai para a mesa -- com o icone da mesma
+# familia do principal, para os dois parecerem o mesmo programa.
+$planoB = Join-Path $mesa 'Se não abrir - clique aqui.lnk'
+$shell = New-Object -ComObject WScript.Shell
+$lnk = $shell.CreateShortcut($planoB)
+$lnk.TargetPath = Join-Path $aqui 'Se nao abrir - clique aqui.bat'
+$lnk.WorkingDirectory = $aqui
+$lnk.IconLocation = (Join-Path $aqui 'transcricao-planoB.ico') + ',0'
+$lnk.Description = 'Liga a Transcricao de audio e espera ela responder'
+$lnk.Save()
+
+# Instalacao anterior deixava o .bat solto na mesa; sai, para nao ficarem dois.
+$restoBat = Join-Path $mesa 'Se não abrir - clique aqui.bat'
+if (Test-Path $restoBat) { Remove-Item $restoBat -Force }
 
 Write-Host ""
 Write-Host "  Pronto." -ForegroundColor Green
