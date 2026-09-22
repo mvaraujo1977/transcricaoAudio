@@ -451,10 +451,14 @@ def _painel_de_entrada(processando, mostrar_exemplo=False):
                            "mais importantes no começo.".format(LIMITE_TOKENS_VOCABULARIO))
 
     if mostrar_exemplo:
-        # Quem abre a demo pública raramente tem um arquivo de áudio à mão. O
-        # exemplo vem no repositório e entra pelo mesmo caminho da transcrição,
-        # sem upload -- é o que separa ver a ferramenta funcionando de fechar a
-        # aba. Fica ao lado do botão principal, e some assim que há resultado.
+        # Só na demo pública. Quem chega por um link do currículo raramente tem
+        # um arquivo de áudio à mão, e este botão é o que separa ver a
+        # ferramenta funcionando de fechar a aba: o exemplo vem no repositório e
+        # entra pelo mesmo caminho da transcrição, sem upload.
+        #
+        # Na instalação local ele não aparece -- lá a pessoa tem os próprios
+        # arquivos, e um botão que transcreve Machado de Assis só ocupa espaço
+        # ao lado do botão que importa. Some também assim que há resultado.
         coluna_transcrever, coluna_exemplo = st.columns([2, 1])
         clicou = coluna_transcrever.button(
             "Transcrever", type="primary", width="stretch",
@@ -633,8 +637,11 @@ if em_demo():
                "ter a garantia de verdade, rode o projeto na sua máquina com "
                "Docker: [{0}]({1}).".format(URL_PROJETO.split('//')[-1], URL_PROJETO))
 
+# O exemplo é da demo, pela mesma marca que decide os limites e a ressalva de
+# confidencialidade -- o entrypoint a liga quando SPACE_ID existe.
 upload, idioma, modelo, vocabulario, clicou, exemplo = _painel_de_entrada(
-    processando, mostrar_exemplo='texto_editado' not in st.session_state)
+    processando,
+    mostrar_exemplo=em_demo() and 'texto_editado' not in st.session_state)
 
 if clicou or exemplo:
     # O clique só liga o estado e volta: a transcrição roda no rerun seguinte,

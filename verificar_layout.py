@@ -201,11 +201,9 @@ def main():
     conferir([e.label for e in vazio.expander] == ["Opções avançadas"],
              "opcoes avancadas recolhidas num expander")
     rotulos = [b.label for b in vazio.button]
-    conferir(rotulos == ['Transcrever', 'Testar com exemplo'],
-             "os dois botoes do estado vazio, nesta ordem")
+    conferir(rotulos == ['Transcrever'],
+             "fora da demo ha um botao so: o exemplo nao aparece")
     conferir(vazio.button[0].disabled, "Transcrever desabilitado sem arquivo")
-    conferir(not vazio.button[1].disabled,
-             "Testar com exemplo habilitado: nao depende de upload")
     conferir(len(vazio.metric) == 0 and len(vazio.download_button) == 0,
              "nada de resultado na tela")
 
@@ -293,9 +291,19 @@ def main():
             return transcrever_falsa(segmentos)(caminho, *args, **kwargs)
 
         audioTranscricao.transcrever = espiar
-        com_exemplo = AppTest.from_file('app.py', default_timeout=120)
-        com_exemplo.run()
-        com_exemplo.button[1].click().run()
+        # O botao so existe na demo, entao o teste dele roda com a marca ligada.
+        ambiente = com_ambiente(TRANSCRICAO_DEMO='1')
+        try:
+            com_exemplo = AppTest.from_file('app.py', default_timeout=120)
+            com_exemplo.run()
+            conferir([b.label for b in com_exemplo.button] ==
+                     ['Transcrever', 'Testar com exemplo'],
+                     "na demo sao dois botoes, nesta ordem")
+            conferir(not com_exemplo.button[1].disabled,
+                     "Testar com exemplo habilitado: nao depende de upload")
+            com_exemplo.button[1].click().run()
+        finally:
+            com_ambiente(**ambiente)
         conferir(not com_exemplo.exception, "o exemplo roda sem excecao")
         conferir(bool(recebidos) and recebidos[0].endswith('exemplo-o-alienista.mp3'),
                  "transcreve o arquivo do repositorio, sem upload")

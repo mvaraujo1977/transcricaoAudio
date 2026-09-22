@@ -6,11 +6,19 @@ Como a interface está organizada, como uma transcrição pode ser interrompida
 
 A interface tem três estados e mostra um de cada vez:
 
-- **Vazio**: título, o que a ferramenta faz, os selos do que a diferencia
-  (processamento local, sem envio para a nuvem, modelo Whisper, idiomas), o
+- **Vazio**: título, o que a ferramenta faz, os selos do que a diferencia, o
   uploader, as opções avançadas recolhidas e a faixa **Como funciona**, com os
   três passos do fluxo em uma frase cada. É o que responde "o que isso faz" a
   quem abre o link sem conhecer o projeto; some assim que houver transcrição.
+
+  Na demo pública entra aqui também o botão **Testar com exemplo**, ao lado do
+  principal: quem chega por um link raramente tem áudio à mão, e é ele que
+  separa ver a ferramenta funcionando de fechar a aba. Na instalação local o
+  botão não existe — lá a pessoa tem os próprios arquivos, e ele seria só ruído
+  ao lado do botão que importa. O condicional é o mesmo dos limites e da
+  ressalva de confidencialidade: a marca que o entrypoint liga quando `SPACE_ID`
+  existe.
+
 - **Processando**: os controles ficam desabilitados e um painel único reúne a
   barra de progresso, o tempo decorrido, a posição no áudio (`08:17 de 37:27`),
   a estimativa do que falta e o botão **Cancelar**. A estimativa vem do ritmo

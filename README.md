@@ -49,9 +49,11 @@ meio do caminho pertence a outra empresa.
 - **Cancela no meio** e mantém o que já foi transcrito, com aviso de até que
   ponto do áudio o texto vai.
 - **Tem linha de comando** além da interface, com os mesmos parâmetros.
-- **Traz um áudio de exemplo**: o botão *Testar com exemplo* transcreve 24 s de
-  "O Alienista", de Machado de Assis, em domínio público, sem precisar de
-  arquivo à mão ([créditos](exemplos/CREDITOS.md)).
+- **Traz um áudio de exemplo** para a demo pública: lá o botão *Testar com
+  exemplo* transcreve 24 s de "O Alienista", de Machado de Assis, em domínio
+  público ([créditos](exemplos/CREDITOS.md)), para quem chega sem arquivo à mão.
+  Na instalação local o botão não aparece — ali você tem os próprios arquivos, e
+  ele só ocuparia espaço ao lado do que importa.
 
 O fluxo completo, do envio ao download, com um áudio de 40 s — quadros do
 processo, não em tempo real:
