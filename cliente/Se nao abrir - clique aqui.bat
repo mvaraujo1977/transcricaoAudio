@@ -10,14 +10,14 @@ REM chamados so pelo nome, `timeout` e `curl` podem cair numa versao de outro
 REM programa que esteja no PATH (Git, WSL, MSYS) e se comportar diferente.
 REM Aconteceu num teste: o `timeout` do Git Bash respondeu "invalid time
 REM interval /t".
-title Transcricao de audio
+title AudioToText
 setlocal
 
 set "ESPERAR=%SystemRoot%\System32\ping.exe"
 set "CURL=%SystemRoot%\System32\curl.exe"
 
 echo.
-echo   Ligando a Transcricao de audio...
+echo   Ligando o AudioToText...
 echo   Pode levar ate um minuto na primeira vez do dia.
 echo.
 

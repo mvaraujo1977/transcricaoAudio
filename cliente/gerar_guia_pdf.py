@@ -32,7 +32,7 @@ from reportlab.platypus import (HRFlowable, ListFlowable, ListItem, Paragraph,
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FONTE = os.path.join(RAIZ, 'docs', 'GUIA-DO-CLIENTE.md')
-SAIDA_PADRAO = os.path.join(RAIZ, 'cliente', 'Transcricao de audio - guia rapido.pdf')
+SAIDA_PADRAO = os.path.join(RAIZ, 'cliente', 'AudioToText - guia rapido.pdf')
 
 # As mesmas cores do tema da aplicacao (.streamlit/config.toml), para o guia e a
 # tela nao parecerem dois produtos.
@@ -152,7 +152,7 @@ def gerar(fonte=FONTE, saida=SAIDA_PADRAO):
         saida, pagesize=A4,
         leftMargin=MARGEM, rightMargin=MARGEM,
         topMargin=MARGEM, bottomMargin=MARGEM,
-        title="Transcricao de audio - guia rapido", author="Marcelo Viana de Araujo")
+        title="AudioToText - guia rapido", author="Marcelo Viana de Araujo")
     documento.build(_blocos(linhas, _estilos()))
     return saida
 

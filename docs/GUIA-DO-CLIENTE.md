@@ -1,11 +1,11 @@
-# Transcrição de áudio — guia rápido
+# AudioToText — guia rápido
 
 Transforma gravações em texto **dentro deste computador**. Nada do que você
 enviar sai daqui: sem internet, sem conta, sem senha.
 
 ## Abrir
 
-Clique duas vezes no atalho **Transcrição de áudio**, na Área de Trabalho. Abre
+Clique duas vezes no atalho **AudioToText**, na Área de Trabalho. Abre
 uma página no navegador — é assim mesmo: o programa usa o navegador como tela,
 mas continua rodando só nesta máquina. Deixe aberta enquanto trabalha.
 
