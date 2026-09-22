@@ -72,6 +72,21 @@ FINISHED_SUCCESSFULLY = 0
 MARKDOWN_CAPTION = Markdown.Type.CAPTION
 
 
+def _esquema(host):
+    """ws:// para a instalacao local, wss:// para a demo publica.
+
+    A mesma ferramenta serve aos dois: medir a demo no Space e medir o container
+    na maquina, que e o numero que interessa a quem vai instalar isto. O
+    container publica em http simples no loopback, sem TLS.
+    """
+    nome = host.split(':')[0].lower()
+    return 'ws' if nome in ('localhost', '127.0.0.1', '::1') else 'wss'
+
+
+def _endereco_http(host):
+    return "{0}://{1}".format('http' if _esquema(host) == 'ws' else 'https', host)
+
+
 class Tela:
     """Junta o que os ForwardMsg contam sobre a tela do outro lado."""
 
@@ -152,18 +167,40 @@ async def _pedir_urls(ws, sessao, nome):
             return msg.file_urls_response.file_urls[0]
 
 
-async def _enviar_arquivo(host, urls, nome, dados):
+def _sessao_com_xsrf(host):
+    """Sessao HTTP ja com o cookie de XSRF, quando o servidor exige um.
+
+    A protecao XSRF do Streamlit fica LIGADA na instalacao local e desligada na
+    demo publica -- o cookie nao sobrevive ao iframe do Spaces. Sem o token, o
+    upload local volta 403 "XSRF token missing or invalid".
+
+    Quem entrega o cookie e /_stcore/health, nao a raiz. O token vai depois no
+    cabecalho X-Xsrftoken, e o cookie acompanha pela propria sessao: o servidor
+    compara os dois.
+    """
+    sessao = requests.Session()
+    try:
+        sessao.get(_endereco_http(host) + '/_stcore/health', timeout=15)
+    except requests.RequestException:
+        pass  # sem cookie o upload so falha se a protecao estiver mesmo ligada
+    return sessao
+
+
+async def _enviar_arquivo(host, sessao, urls, nome, dados):
     """Sobe o arquivo em multipart, fora do laco de eventos."""
     alvo = urls.upload_url
     if alvo.startswith('/'):
-        alvo = "https://{0}{1}".format(host, alvo)
+        alvo = _endereco_http(host) + alvo
+
+    token = sessao.cookies.get('_streamlit_xsrf')
+    cabecalhos = {'X-Xsrftoken': token} if token else {}
 
     def enviar():
         # multipart porque o handler do Streamlit le request.form(); em thread
         # separada porque bloquear o laco de eventos mata o ping do websocket, e
         # sem ping o servidor descarta a sessao antes de o upload chegar.
-        return requests.put(alvo, files={'file': (nome, dados, 'application/octet-stream')},
-                            timeout=600)
+        return sessao.put(alvo, files={'file': (nome, dados, 'application/octet-stream')},
+                          headers=cabecalhos, timeout=600)
 
     resposta = await asyncio.to_thread(enviar)
     if resposta.status_code >= 400:
@@ -192,7 +229,8 @@ async def medir(host, caminho, mostrar_tela=True):
         dados = arquivo.read()
 
     tela = Tela()
-    url = "wss://{0}/_stcore/stream".format(host)
+    sessao = _sessao_com_xsrf(host)
+    url = "{0}://{1}/_stcore/stream".format(_esquema(host), host)
     async with websockets.connect(url, subprotocols=['streamlit'], max_size=None,
                                   open_timeout=60, ping_interval=20) as ws:
         # Um rerun vazio e o que faz o servidor executar a tela pela primeira
@@ -212,7 +250,7 @@ async def medir(host, caminho, mostrar_tela=True):
 
         urls = await _pedir_urls(ws, tela.sessao, nome)
         inicio_upload = time.monotonic()
-        await _enviar_arquivo(host, urls, nome, dados)
+        await _enviar_arquivo(host, sessao, urls, nome, dados)
         if mostrar_tela:
             print("  upload         : {0:.1f} MB em {1:.1f} s".format(
                 len(dados) / 1e6, time.monotonic() - inicio_upload))

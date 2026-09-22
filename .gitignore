@@ -5,6 +5,9 @@ __pycache__/
 transcricao_audio.txt
 *.pdf
 
+# Artefatos de entrega ao cliente, gerados a partir do repositorio
+cliente/*.tar
+
 # Áudios de trabalho montados no container
 dados/*
 !dados/.gitkeep

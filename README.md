@@ -329,7 +329,8 @@ em **[docs/SEGURANCA.md](docs/SEGURANCA.md)**. Em resumo:
 | `Dockerfile`, `docker-compose.yml` | imagem com o modelo embutido e porta em loopback |
 | `exemplos/` | áudio de exemplo em domínio público e seus [créditos](exemplos/CREDITOS.md) |
 | `deploy/` | README e dependências do Space, e o script que publica a demo |
-| `docs/` | [segurança](docs/SEGURANCA.md), [interface](docs/INTERFACE.md) e [publicação da demo](docs/DEPLOY.md) |
+| `cliente/` | pacote de instalação numa máquina de cliente: instalador, atalho, ícone e o gerador do guia |
+| `docs/` | [segurança](docs/SEGURANCA.md), [interface](docs/INTERFACE.md), [publicação da demo](docs/DEPLOY.md), [instalação em cliente](docs/INSTALACAO-CLIENTE.md) e o [guia do cliente](docs/GUIA-DO-CLIENTE.md) |
 
 ## Licença
 

@@ -1,5 +1,13 @@
 services:
   transcricao:
+    # O nome da imagem e FIXO aqui, e nao derivado do nome da pasta.
+    #
+    # Sem esta linha o Compose monta o nome a partir do diretorio do projeto
+    # (`<pasta>-transcricao`). Numa instalacao de cliente, onde a pasta pode se
+    # chamar qualquer coisa, o nome nao bateria com o da imagem carregada do
+    # .tar: o Compose nao a encontraria e tentaria CONSTRUIR -- justamente o que
+    # o .tar existe para evitar, e que falha numa maquina sem internet.
+    image: transcricao-audio:1.0
     build: .
     container_name: transcricao
     ports:
