@@ -1,7 +1,7 @@
 ﻿# NAO REMOVA O BOM DESTE ARQUIVO.
 #
 # O Windows PowerShell 5.1 -- o que vem no Windows -- le .ps1 como ANSI quando o
-# arquivo nao comeca com BOM de UTF-8. Sem ele, um nome com acento no atalho
+# arquivo nao comeca com BOM de UTF-8. Sem ele, 'Transcricao de audio.url' com
 # acento vira "TranscriAAo de Aaudio.url" no nome do atalho, na Area de Trabalho
 # do cliente. Testado: acontece.
 
@@ -18,7 +18,7 @@
 # `restart: unless-stopped` do compose.
 #
 # Este .ps1 existe porque .bat e codepage do console nao lidam bem com acento:
-# o atalho do plano B precisa nascer com o nome certo, e aqui o PowerShell
+# "Transcricao de audio.url" precisa nascer com o nome certo, e aqui o PowerShell
 # grava em UTF-8 sem depender de chcp.
 
 $ErrorActionPreference = 'Stop'
@@ -29,7 +29,7 @@ function Passo($texto) { Write-Host "  $texto" -ForegroundColor Cyan }
 function Falha($texto) { Write-Host "  $texto" -ForegroundColor Red }
 
 Write-Host ""
-Write-Host "Instalando AudioToText" -ForegroundColor White
+Write-Host "Instalando Transcricao de audio" -ForegroundColor White
 Write-Host ""
 
 # --- 1. Docker respondendo? ------------------------------------------------
@@ -77,7 +77,7 @@ if (-not $ok) { Falha "Subiu, mas nao respondeu em 2 minutos. Veja o Docker Desk
 Passo "Criando o atalho na Area de Trabalho..."
 $icone = Join-Path $aqui 'transcricao.ico'
 $mesa = [Environment]::GetFolderPath('Desktop')
-$atalho = Join-Path $mesa 'AudioToText.url'
+$atalho = Join-Path $mesa 'Transcrição de áudio.url'
 
 $conteudo = @"
 [InternetShortcut]
@@ -99,18 +99,18 @@ $lnk = $shell.CreateShortcut($planoB)
 $lnk.TargetPath = Join-Path $aqui 'Se nao abrir - clique aqui.bat'
 $lnk.WorkingDirectory = $aqui
 $lnk.IconLocation = (Join-Path $aqui 'transcricao-planoB.ico') + ',0'
-$lnk.Description = 'Liga o AudioToText e espera ele responder'
+$lnk.Description = 'Liga a Transcricao de audio e espera ela responder'
 $lnk.Save()
 
 # Restos de instalacoes anteriores, para nao ficarem atalhos duplicados na mesa:
 # o .bat que era copiado solto, e o .url com o nome que o programa tinha antes.
-foreach ($resto in @('Se não abrir - clique aqui.bat', 'Transcrição de áudio.url')) {
+foreach ($resto in @('Se não abrir - clique aqui.bat', 'AudioToText.url')) {
     $caminho = Join-Path $mesa $resto
     if (Test-Path $caminho) { Remove-Item $caminho -Force }
 }
 
 Write-Host ""
 Write-Host "  Pronto." -ForegroundColor Green
-Write-Host "  Na Area de Trabalho tem o atalho 'AudioToText'." -ForegroundColor Green
+Write-Host "  Na Area de Trabalho tem o atalho 'Transcricao de audio'." -ForegroundColor Green
 Write-Host ""
 Read-Host "  Enter para fechar"
