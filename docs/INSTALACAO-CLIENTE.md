@@ -6,7 +6,7 @@ outro: [GUIA-DO-CLIENTE.md](GUIA-DO-CLIENTE.md), sem jargão e sem comando.
 
 ## O pacote
 
-A pasta `cliente/` tem tudo o que vai para a máquina dele:
+A pasta `cliente/` tem o que vai para a máquina dele:
 
 | Arquivo | Para quê |
 |---|---|
@@ -15,14 +15,25 @@ A pasta `cliente/` tem tudo o que vai para a máquina dele:
 | `transcricao.ico` | ícone do atalho principal |
 | `transcricao-planoB.ico` | ícone do atalho secundário |
 | `Se nao abrir - clique aqui.bat` | plano B, para quando o Docker ainda está acordando |
+
+E mais dois que **ficam no repositório**: são ferramentas de quem monta o
+pacote, não teriam função na máquina do cliente e exigiriam Python instalado
+lá. O cliente recebe o que eles produzem, não a receita:
+
+| Arquivo | Para quê |
+|---|---|
 | `gerar_icones.py` | gera os dois `.ico` |
 | `gerar_guia_pdf.py` | gera o PDF do guia a partir de `docs/GUIA-DO-CLIENTE.md` |
 
-Junto vai o `docker-compose.yml`, o `.tar` da imagem e o PDF do guia.
+O pacote montado, então, leva os cinco arquivos da primeira tabela mais o
+`docker-compose.yml` (sem a linha `build:`), o `.tar` da imagem, o PDF do guia,
+uma pasta `dados/` e um aviso em texto pedindo que a pasta não seja movida.
 
 ## De onde vem a imagem
 
-**Entregue o `.tar`.** Gere com:
+**Entregue o `.tar`.** Na prática quem o gera é o `montar-pacote.ps1`, na raiz
+do repositório — ele constrói a imagem a partir de um clone limpo, sobe um
+container de validação, e só então salva. Os comandos por baixo são estes:
 
 ```bash
 docker compose build
@@ -61,7 +72,7 @@ vira argumento: *instala sem internet, e depois roda sem internet*.
 
 ## Armadilhas que o teste de instalação revelou
 
-Três coisas quebraram numa instalação real. Ficam registradas porque nenhuma
+Quatro coisas quebraram numa instalação real. Ficam registradas porque nenhuma
 aparece lendo o código.
 
 **Fim de linha.** Com `core.autocrlf=true` — padrão em muita instalação do Git
@@ -96,6 +107,73 @@ Vale notar que a Área de Trabalho pode estar redirecionada para o OneDrive
 (`C:\Users\<user>\OneDrive\Área de Trabalho`). O instalador usa
 `[Environment]::GetFolderPath('Desktop')`, que resolve os dois casos — não
 monte o caminho à mão.
+
+## Armadilhas de montar o pacote
+
+A pasta de entrega é montada pelo `montar-pacote.ps1`, na raiz do repositório:
+ele constrói a imagem a partir de um clone limpo, sobe um container de
+validação, gera o `.tar` e copia para `pacote-cliente/` só o que vai para a
+máquina do cliente. Escrever esse script revelou seis coisas — cinco sobre
+PowerShell, e duas delas afetam também o que o cliente recebe.
+
+**A política de execução barra `.ps1` que veio de fora.** Com `RemoteSigned`,
+que é o padrão em boa parte das instalações, um `.ps1` marcado como baixado da
+internet só roda se estiver assinado digitalmente; sem assinatura, o PowerShell
+recusa com `UnauthorizedAccess`. A marca vem junto com o arquivo, então
+`Unblock-File` resolve, ou `-ExecutionPolicy Bypass` na chamada. **Isso não é só
+do script de montagem:** o pacote chega ao cliente por pen drive ou download, e
+o `instalar.ps1` carrega a mesma marca. O `instalar.bat` precisa chamá-lo com
+`-ExecutionPolicy Bypass`, senão a instalação morre no primeiro clique com um
+texto em vermelho que o cliente não tem como interpretar.
+
+**`.ps1` sem BOM lido como ANSI quebra o parser, não só os acentos.** Isto
+estende o que está registrado acima sobre o nome do atalho. O terceiro byte de
+um travessão em UTF-8 é `0x94`, que na tabela ANSI é a aspa tipográfica de
+fechamento — e o PowerShell aceita aspa tipográfica como delimitador de string.
+As strings passam a começar e terminar no lugar errado, as chaves são engolidas
+para dentro delas, e o script falha com `Token '}' inesperado` numa linha que
+não tem defeito nenhum. Ou seja: sem BOM, um comentário com travessão derruba o
+arquivo inteiro. Ou se grava com BOM, ou se escreve o `.ps1` em ASCII puro. O
+`montar-pacote.ps1` optou pelo ASCII e diz isso no próprio cabeçalho.
+
+**Variável seguida de dois-pontos vira qualificador de unidade.** `"porta
+$porta: a da validação"` não compila: o PowerShell lê `$porta:` como referência
+a uma unidade, do mesmo jeito que em `$env:TEMP`. A forma correta é
+`${porta}:`. Erro fácil de cometer e de diagnosticar mal, porque a mensagem
+fala de "referência de variável inválida" e aponta o caractere, não a intenção.
+
+**Programa externo que falha não lança exceção.** Um `try/catch` em volta de
+`docker version` nunca é acionado: o comando escreve no stderr e devolve código
+de saída, e o `catch` fica inerte. A primeira versão do script tinha exatamente
+isso e imprimia `[ok] Docker respondendo` com o Docker fechado e o erro do named
+pipe visível na tela logo acima. A verificação tem que ser no `$LASTEXITCODE`.
+
+**Com `$ErrorActionPreference = 'Stop'`, stderr de programa externo vira erro
+terminante — e o `2>$null` é o gatilho, não a proteção.** O caso concreto:
+`docker rm -f` de um container que não existe escreve `No such container`, que
+é justamente o resultado esperado de uma limpeza preventiva, e o script morria
+ali. A saída é isolar as chamadas externas numa função que baixa a preferência
+para `Continue` só dentro do bloco e a restaura depois, mantendo o
+`$LASTEXITCODE` disponível para quem chamou.
+
+**`container_name` fixo colide entre projetos — e a colisão passa despercebida.**
+O `docker-compose.yml` fixa `container_name: transcricao`, o que é correto para
+o cliente. Mas rodar o compose a partir do clone temporário, com a instância de
+desenvolvimento no ar, esbarra em `Conflict. The container name "/transcricao"
+is already in use`. O pior não é a falha: é que o `docker inspect transcricao`
+seguinte **encontra o container antigo**, reporta `running`, e a validação passa
+sem ter testado nada da imagem recém-construída. A etapa de validação por isso
+não usa o compose — sobe a imagem com `docker run`, sob o nome
+`transcricao-validacao` e na porta 8599, e remove o container ao final. Ela
+valida a imagem (entrypoint, fim de linha), que é o que o `.tar` carrega; o
+compose é validado na máquina do cliente.
+
+**Uma ressalva sobre o build.** Com o cache quente, o `docker compose build`
+termina em segundos e as camadas de `pip install` e de download do modelo saem
+como `CACHED`. A imagem fica correta, mas essa execução não prova que o build
+funciona numa máquina limpa. Antes de uma entrega que importe, vale uma rodada
+com `--no-cache`: demora, e é o que confirma que o lockfile ainda resolve e que
+o modelo ainda baixa.
 
 ---
 
