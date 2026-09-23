@@ -3,10 +3,7 @@
 Gera os dois icones dos atalhos da Area de Trabalho. Sao a mesma familia de
 proposito: quem olha a Area de Trabalho precisa ver um programa so, nao dois.
 
-O desenho e uma onda sonora virando linhas de texto -- em cima as barras do
-audio, embaixo as linhas do paragrafo. Empilhado, e nao lado a lado, porque num
-icone de 32 px (o tamanho que a Area de Trabalho usa de verdade) qualquer
-composicao horizontal vira borrao.
+O desenho e um MICROFONE: capsula, berco, haste e barra de apoio.
 
     principal  fundo teal, desenho creme    -- cheio, e o do dia a dia
     plano B    fundo creme, desenho salvia  -- contornado e mais apagado
@@ -15,13 +12,33 @@ O plano B e secundario e o icone diz isso sozinho: mesmo desenho, peso menor.
 As cores saem do tema da aplicacao (.streamlit/config.toml), para o atalho e a
 tela nao parecerem dois produtos.
 
+Sobre as medidas: elas NAO foram desenhadas do zero. Saem do icone aprovado
+que estava em b2b012f, medido pixel a pixel na grade de 256 px -- e por isso
+que as medidas abaixo estao escritas como divisoes por 256, com casas
+quebradas como 46.5, em vez de fracoes redondas: sao leitura de regua, nao
+escolha de desenhista. Mexer nelas a esmo desfaz um desenho ja aprovado.
+
+Houve uma tentativa de trocar este microfone por uma onda sonora virando
+linhas de texto. Ela foi revertida: a onda nao dizia "audio" a quem olhava a
+mesa de relance, e o microfone sim. Fica o registro para ninguem refazer a
+troca achando que e melhoria.
+
+Duas coisas que o desenho resolve no unico tamanho que importa -- 16 e 32 px,
+que e onde o icone da Area de Trabalho vive de verdade:
+
+    o berco encosta na base da capsula (os dois terminam em y=138 na grade de
+    256), entao a silhueta fecha numa peca so em vez de virar capsula solta
+    boiando sobre um risco;
+
+    a haste e a barra tem a mesma grossura do berco, o que mantem o peso do
+    traco uniforme quando o reamostrador espreme tudo para 16 px.
+
 Uso:
     python cliente/gerar_icones.py
     python cliente/gerar_icones.py --previa    # gera tambem PNGs para olhar
 """
 
 import argparse
-import math
 import os
 import sys
 
@@ -38,39 +55,33 @@ SALVIA = (63, 91, 83, 255)      # grayColor
 L = 512
 TAMANHOS = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
 
-# A onda e um TRACO CONTINUO, e nao barras. O caminho ate aqui foi por teste,
-# no unico tamanho que importa -- 16 px, que e onde o icone da Area de Trabalho
-# vive:
-#
-#   sete barras finas  -> mancha cinza; cada barra ficava com 1,3 px
-#   tres barras grossas -> legivel, mas o icone lia como um ROSTO: tres
-#                          elementos em cima e barra horizontal embaixo e
-#                          composicao facial, por mais que se ajuste proporcao
-#   traco continuo      -> le como onda em qualquer tamanho, e nao tem como
-#                          virar olhos
-#
-# Tres meias-ondas (1,5 ciclo): com mais ciclos as cristas se aproximam e o
-# reamostrador as funde de novo.
-CICLOS = 3.0
-AMPLITUDE = 0.135       # fracao de L
-GROSSURA_ONDA = 0.085
-EIXO_ONDA = 0.33
+RAIO_CAIXA = 0.22
 
-# Duas linhas de texto. A segunda e curta: e o que faz duas barras horizontais
-# serem lidas como paragrafo, e nao como sinal de igual.
-LINHAS = [1.0, 0.52]
-GROSSURA_LINHA = 0.095
-TOPO_LINHAS = 0.60
+# Todas as fracoes sao de L e saem da medicao do icone de b2b012f. O desenho
+# inteiro e centrado na vertical do icone.
+CAPSULA_LARGURA = 58 / 256.0
+CAPSULA_TOPO = 51 / 256.0
+CAPSULA_BASE = 138 / 256.0      # tambem e o centro do berco
 
-MARGEM = 0.15
+# Meio pixel a mais no raio e um no traco: o `arc` desenhado em 512 e
+# reduzido para 256 perde essa beirada para o antialias, e sem a folga o
+# berco sai mais fino que o do icone aprovado. Numero conferido medindo o
+# .ico gerado, nao estimado.
+BERCO_RAIO = 47.5 / 256.0       # externo; o `arc` do Pillow cresce para dentro
+BERCO_GROSSURA = 12 / 256.0
+
+HASTE_LARGURA = 11 / 256.0
+BARRA_TOPO = 202 / 256.0
+BARRA_LARGURA = 66 / 256.0
+BARRA_GROSSURA = 10 / 256.0
 
 
 def _desenhar(fundo, tinta, contorno=None):
-    """Monta um icone: onda sonora em cima, linhas de texto embaixo."""
+    """Monta um icone: microfone sobre fundo arredondado."""
     img = Image.new('RGBA', (L, L), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    raio_caixa = int(L * 0.22)
+    raio_caixa = int(L * RAIO_CAIXA)
     d.rounded_rectangle([0, 0, L - 1, L - 1], radius=raio_caixa, fill=fundo)
     if contorno is not None:
         # O contorno e o que distingue o icone secundario de longe, antes mesmo
@@ -82,35 +93,40 @@ def _desenhar(fundo, tinta, contorno=None):
                             radius=raio_caixa - largura // 4,
                             outline=contorno, width=largura)
 
-    margem = int(L * MARGEM)
-    util = L - 2 * margem
+    meio = L / 2.0
 
-    # --- onda ----------------------------------------------------------------
-    eixo = int(L * EIXO_ONDA)
-    amplitude = int(L * AMPLITUDE)
-    grossura = int(L * GROSSURA_ONDA)
+    # --- capsula -------------------------------------------------------------
+    # Raio igual a metade da largura: um estadio, e nao um retangulo de cantos
+    # arredondados. E o que da a forma de microfone de mao.
+    capsula_meia = L * CAPSULA_LARGURA / 2.0
+    topo = L * CAPSULA_TOPO
+    base = L * CAPSULA_BASE
+    d.rounded_rectangle([meio - capsula_meia, topo, meio + capsula_meia, base],
+                        radius=capsula_meia, fill=tinta)
 
-    pontos = []
-    for passo in range(49):
-        t = passo / 48.0
-        pontos.append((margem + int(util * t),
-                       eixo - int(amplitude * math.sin(t * math.pi * CICLOS))))
-    d.line(pontos, fill=tinta, width=grossura, joint='curve')
-    # O `line` do Pillow deixa as pontas em esquadria; os circulos as arredondam,
-    # para a onda casar com o acabamento das linhas de texto.
-    for ponta in (pontos[0], pontos[-1]):
-        d.ellipse([ponta[0] - grossura // 2, ponta[1] - grossura // 2,
-                   ponta[0] + grossura // 2, ponta[1] + grossura // 2], fill=tinta)
+    # --- berco ---------------------------------------------------------------
+    # Meia circunferencia (0 a 180 graus = metade de baixo) centrada exatamente
+    # na base da capsula. As pontas ficam em esquadria, encostando na capsula:
+    # arredonda-las abriria uma fresta que a 16 px vira sujeira.
+    raio = L * BERCO_RAIO
+    grossura = max(1, int(round(L * BERCO_GROSSURA)))
+    d.arc([meio - raio, base - raio, meio + raio, base + raio],
+          start=0, end=180, fill=tinta, width=grossura)
 
-    # --- linhas de texto -----------------------------------------------------
-    grossura_linha = int(L * GROSSURA_LINHA)
-    passo_linha = int(grossura_linha * 1.85)
-    topo = int(L * TOPO_LINHAS)
+    # --- haste ---------------------------------------------------------------
+    # Vai do fundo do berco ate dentro da barra: a sobreposicao de 1 px evita
+    # a costura clara que aparece entre duas figuras que apenas se tocam.
+    haste_meia = L * HASTE_LARGURA / 2.0
+    barra_topo = L * BARRA_TOPO
+    d.rectangle([meio - haste_meia, base + raio - 1, meio + haste_meia, barra_topo + 1],
+                fill=tinta)
 
-    for indice, fracao in enumerate(LINHAS):
-        y = topo + indice * passo_linha
-        d.rounded_rectangle([margem, y, margem + int(util * fracao), y + grossura_linha],
-                            radius=grossura_linha // 2, fill=tinta)
+    # --- barra de apoio ------------------------------------------------------
+    barra_meia = L * BARRA_LARGURA / 2.0
+    barra_grossura = L * BARRA_GROSSURA
+    d.rounded_rectangle([meio - barra_meia, barra_topo,
+                         meio + barra_meia, barra_topo + barra_grossura],
+                        radius=barra_grossura / 2.0, fill=tinta)
 
     return img
 
